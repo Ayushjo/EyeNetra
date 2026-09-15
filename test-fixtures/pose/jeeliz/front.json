@@ -1,0 +1,23 @@
+{
+  "id": "front",
+  "videoWidth": 1280,
+  "videoHeight": 720,
+  "detect": {
+    "detected": 1,
+    "x": 0,
+    "y": 0,
+    "s": 0.55,
+    "rx": 0,
+    "ry": 0,
+    "rz": 0
+  },
+  "expect": {
+    "yawSign": 0,
+    "yawAbsDegMax": 8,
+    "scaleMin": 0.15,
+    "scaleMax": 2.8
+  },
+  "_meta": {
+    "note": "Jeeliz detectState shape — no landmarks/iris. Apache-2.0 FaceFilter."
+  }
+}

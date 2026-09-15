@@ -1,0 +1,31 @@
+---
+description: Core project context for the eyewear virtual try-on app
+alwaysApply: true
+---
+
+# Project: Web Virtual Eyewear Try-On
+
+Stack: Next.js 15 (App Router), TypeScript strict mode, React Three Fiber + drei,
+@mediapipe/tasks-vision, Tailwind CSS.
+
+## Non-negotiables
+- Never fabricate a face-tracking algorithm — use @mediapipe/tasks-vision's FaceLandmarker
+  task and its documented output shape (landmarks, blendshapes, facialTransformationMatrixes).
+  Verify the current API by checking node_modules/@mediapipe/tasks-vision types before writing
+  code against it — do not assume method names from training data.
+- All 3D rendering goes through React Three Fiber, not raw imperative Three.js, unless there's
+  a specific documented reason (state it in a comment).
+- Color management: renderer must use sRGB output color space and ACESFilmic (or Neutral) tone
+  mapping. Do not skip this — flag it explicitly in any component that creates a WebGLRenderer.
+- Every glasses model gets positioned/scaled/rotated via a single `useFitEngine` hook — no
+  scattered position math in components.
+- Before importing any npm package, verify it's installed and check its actual exported API
+  in node_modules — do not assume APIs from memory.
+
+## Working style
+- Build in the phased order described in the project brief (tracking MVP → basic fit → real
+  asset+materials → occlusion+smoothing → catalog UI → mobile perf → QA). Do not jump ahead to
+  polish before the current phase's core mechanic is visibly working.
+- After each phase, stop and summarize what changed and how to test it manually, don't chain
+  multiple phases into one uninterrupted run.
+- Flag any performance-risky code (anything running per-frame) explicitly in comments.
