@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useFaceCalibration } from "@/hooks/useFaceCalibration";
+import { useFraming } from "@/hooks/useFraming";
 import { clearFaceProfile, loadFaceProfile } from "@/lib/faceProfile";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -13,8 +14,10 @@ export function FitCalibration() {
   const { status, progress, error, calibrate, isCapturing } =
     useFaceCalibration();
 
-  const canCalibrate =
-    hasFace && trackingProviderId === "mediapipe";
+  const isMediapipe = trackingProviderId === "mediapipe";
+  const framing = useFraming(isMediapipe && !isCapturing);
+  // Only scan when the user is well-framed (like setting up Face ID).
+  const canCalibrate = hasFace && isMediapipe && framing.ok;
   const hydrated = useRef(false);
 
   // Hydrate once from localStorage — do NOT re-run when faceProfile flips
@@ -58,6 +61,21 @@ export function FitCalibration() {
         <span className="text-xs text-amber-700/90">
           Jeeliz is experimental — size/pose won’t match Meta. Use MediaPipe for
           accurate try-on.
+        </span>
+      ) : isCapturing ? (
+        <span className="text-xs font-medium text-emerald-700">
+          {framing.ok ? "Hold still — measuring…" : framing.message}
+        </span>
+      ) : !canCalibrate ? (
+        <span
+          className={`text-xs font-medium ${
+            framing.state === "no-face" ? "text-zinc-500" : "text-amber-700"
+          }`}
+        >
+          {framing.message}
+          <span className="ml-1 font-normal text-zinc-400">
+            · position your face to scan
+          </span>
         </span>
       ) : faceProfile ? (
         <span className="text-xs text-zinc-500">

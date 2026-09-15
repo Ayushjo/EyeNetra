@@ -78,14 +78,18 @@ function eyeSpanScale(
   );
 }
 
-/** Floor so a bad localStorage profile cannot shrink frames into invisibility. */
-const CALIB_LIVE_FLOOR = 0.55;
-
 /**
- * Live path: eyeSpan * scaleMul (per-frame, noisy).
- * Calibrated: (frameWidthMm / faceWidthMm) * refEyeSpanScene — pure mm fit.
- * Do NOT multiply by scaleMul here (that ~1.3–1.4 blow-up made frames too big).
- * Floored at ~0.55× liveScale so bad profiles cannot collapse size.
+ * Live path: eyeSpan * scaleMul (per-frame, heuristic width guess).
+ *
+ * Calibrated: (frameWidthMm / faceWidthMm) * LIVE eye-span. This is the key
+ * fix — the ratio (frame mm ÷ your real face mm) is a constant, but it is
+ * multiplied by the *live* outer-canthi span so the frame keeps tracking
+ * distance: lean in → span grows → frame grows, lean out → shrinks. The old
+ * code froze `refEyeSpanScene` (calibration-time span), which pinned the frame
+ * to one size while the face changed with distance — that is why calibrated
+ * frames looked too big when leaning back, too small when leaning in, then
+ * vanished. So calibration now sets the *correct width ratio* to your real
+ * face (mm-accurate) AND still follows distance.
  */
 export function resolveSceneScale(
   landmarks: LandmarkPoint[],
@@ -95,17 +99,12 @@ export function resolveSceneScale(
   faceProfile: FaceProfile | null,
 ): { scale: number; liveScale: number; calibScale: number | null } {
   const liveScale = eyeSpanScale(landmarks, aspect, scaleMul);
-  if (
-    !faceProfile ||
-    !(faceProfile.faceWidthMm > 0) ||
-    !(faceProfile.refEyeSpanScene > 0)
-  ) {
+  if (!faceProfile || !(faceProfile.faceWidthMm > 0)) {
     return { scale: liveScale, liveScale, calibScale: null };
   }
-  const rawCalib =
-    (frameWidthMm / faceProfile.faceWidthMm) * faceProfile.refEyeSpanScene;
-  const floored = Math.max(rawCalib, liveScale * CALIB_LIVE_FLOOR);
-  const calibScale = Math.min(2.8, Math.max(0.2, floored));
+  const liveSpan = outerEyeSpanScene(landmarks, aspect);
+  const rawCalib = (frameWidthMm / faceProfile.faceWidthMm) * liveSpan;
+  const calibScale = Math.min(2.8, Math.max(0.2, rawCalib));
   return { scale: calibScale, liveScale, calibScale };
 }
 
