@@ -206,7 +206,10 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     const posBeta = 0.01 + resp * 0.05;
     posFilter.current.setParams(posMin, posBeta);
     quatFilter.current.setParams(posMin * 1.3, posBeta * 1.3);
-    scaleFilter.current.setParams(0.5 + resp * 1.5, 0.008 + resp * 0.02);
+    // Scale must chase distance changes fast — a laggy scale reads as "frame
+    // too big when I move back" (face shrinks instantly, frame catches up
+    // slowly). High beta = snaps during motion, still smooth at rest.
+    scaleFilter.current.setParams(1.6 + resp * 2.4, 0.06 + resp * 0.08);
 
     if (!initialized.current) {
       posFilter.current.reset();

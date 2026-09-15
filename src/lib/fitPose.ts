@@ -103,7 +103,11 @@ export function resolveSceneScale(
     return { scale: liveScale, liveScale, calibScale: null };
   }
   const liveSpan = outerEyeSpanScene(landmarks, aspect);
-  const rawCalib = (frameWidthMm / faceProfile.faceWidthMm) * liveSpan;
+  // CALIB_FIT (<1): the GLB's normalized front width includes flared hinges, so
+  // nominal frameWidthMm slightly over-scales the visible lens area. Small trim
+  // keeps real-world width honest without shrinking below the eye line.
+  const CALIB_FIT = 0.94;
+  const rawCalib = (frameWidthMm / faceProfile.faceWidthMm) * liveSpan * CALIB_FIT;
   const calibScale = Math.min(2.8, Math.max(0.2, rawCalib));
   return { scale: calibScale, liveScale, calibScale };
 }
