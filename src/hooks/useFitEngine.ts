@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import { Quaternion, Vector3, type Object3D } from "three";
 import { computePose } from "@/lib/fitPose";
+import { OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type { FitPose } from "@/lib/fitPose";
@@ -34,6 +35,14 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
   const smoothQuat = useRef(new Quaternion());
   const smoothScale = useRef(1);
   const initialized = useRef(false);
+
+  // One-euro filters: adaptive smoothing (still = smooth, moving = responsive).
+  const posFilter = useRef(new OneEuroVec(3, 1.4, 0.03));
+  const quatFilter = useRef(new OneEuroVec(4, 2.0, 0.04));
+  const scaleFilter = useRef(new OneEuroScalar(1.0, 0.01));
+  const posBuf = useRef<number[]>([0, 0, 0]);
+  const quatBuf = useRef<number[]>([0, 0, 0, 1]);
+  const prevQuat = useRef(new Quaternion());
   const lastFrameId = useRef<string | null>(null);
   const lastProvider = useRef<string | null>(null);
   const lastFaceSeenAt = useRef(0);
@@ -75,6 +84,9 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       initialized.current = false;
       loggedApply.current = false;
       loggedPoseNull.current = false;
+      posFilter.current.reset();
+      quatFilter.current.reset();
+      scaleFilter.current.reset();
     }
 
     const nowMs = performance.now();
@@ -184,20 +196,58 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     }
 
     target.visible = true;
-    const a = Math.min(1, Math.max(0.08, smoothingFactor));
+
+    // smoothingFactor slider (0.05..1) modulates one-euro responsiveness:
+    // higher = snappier (tracks fast motion), lower = glassier (max de-jitter).
+    const resp = Math.min(1, Math.max(0.05, smoothingFactor));
+    const t = nowMs / 1000;
+    // Map slider → one-euro min cutoff + beta. resp 0.05→glassy, 1→snappy.
+    const posMin = 0.6 + resp * 2.4;
+    const posBeta = 0.01 + resp * 0.05;
+    posFilter.current.setParams(posMin, posBeta);
+    quatFilter.current.setParams(posMin * 1.3, posBeta * 1.3);
+    scaleFilter.current.setParams(0.5 + resp * 1.5, 0.008 + resp * 0.02);
 
     if (!initialized.current) {
+      posFilter.current.reset();
+      quatFilter.current.reset();
+      scaleFilter.current.reset();
       smoothPos.current.set(pos.x, pos.y, pos.z);
-      smoothQuat.current.set(rot.x, rot.y, rot.z, rot.w);
+      smoothQuat.current.set(rot.x, rot.y, rot.z, rot.w).normalize();
       smoothScale.current = scale;
+      prevQuat.current.copy(smoothQuat.current);
       initialized.current = true;
     } else {
-      smoothPos.current.lerp(new Vector3(pos.x, pos.y, pos.z), a);
-      smoothQuat.current.slerp(
-        new Quaternion(rot.x, rot.y, rot.z, rot.w),
-        a,
+      const pb = posFilter.current.filter(
+        t,
+        [pos.x, pos.y, pos.z],
+        posBuf.current,
       );
-      smoothScale.current = smoothScale.current * (1 - a) + scale * a;
+      smoothPos.current.set(pb[0], pb[1], pb[2]);
+
+      // Keep quaternion on the same hemisphere as the last output before
+      // component-wise filtering, else sign flips cause a visible snap.
+      let qx = rot.x;
+      let qy = rot.y;
+      let qz = rot.z;
+      let qw = rot.w;
+      if (
+        prevQuat.current.x * qx +
+          prevQuat.current.y * qy +
+          prevQuat.current.z * qz +
+          prevQuat.current.w * qw <
+        0
+      ) {
+        qx = -qx;
+        qy = -qy;
+        qz = -qz;
+        qw = -qw;
+      }
+      const qb = quatFilter.current.filter(t, [qx, qy, qz, qw], quatBuf.current);
+      smoothQuat.current.set(qb[0], qb[1], qb[2], qb[3]).normalize();
+      prevQuat.current.copy(smoothQuat.current);
+
+      smoothScale.current = scaleFilter.current.filter(t, scale);
     }
 
     target.position.copy(smoothPos.current);

@@ -2,111 +2,88 @@
 
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
-import { DoubleSide, Mesh, type Group } from "three";
+import { Quaternion, Vector3, type Mesh } from "three";
 import { landmarkToWorld } from "@/lib/coords";
 import { LM } from "@/lib/mediapipe/constants";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 /**
- * Why NOT a filled face oval:
- * Ortho overlay keeps temple XY ≈ hinge XY while Z goes into the head.
- * A face-disc occluder covers that silhouette, so depth-test kills temples
- * at the hinges → stubs near the eyes (what we saw in screenshots).
+ * Head-shaped depth occluder (replaces the old flat ear cards).
  *
- * Fix: depth-only cards localized at the ears. Temples stay visible from
- * hinge → ear, then cull only where they pass behind the ear/hair region.
+ * Why an ellipsoid, not a flat card or a face-oval disc:
+ *  - A flat 2D card at the ears has no depth, so it either culls the temple at
+ *    the hinge (too far forward) or does nothing (too far back).
+ *  - A filled face-oval disc covers the hinge silhouette and stubs the temples.
+ *  - A real 3D head volume, posed with the head, occludes exactly what a real
+ *    head would: the FAR temple (behind the head) disappears, the NEAR temple
+ *    and the front lenses stay visible — at every yaw, automatically.
  *
- * Per-frame (perf-sensitive): landmark → world, place/scale two planes.
+ * Depth-only (colorWrite off): it writes depth but no pixels, so the webcam
+ * face still shows through; it only hides glasses geometry that sits behind it.
+ * Rendered before the glasses (renderOrder 0 < 10) so depth is laid down first.
+ *
+ * Per-frame (perf-sensitive): one landmark→world, one quaternion copy, one
+ * transform write. No allocation in the loop.
  */
-function EarCard({
-  meshRef,
-}: {
-  meshRef: React.RefObject<Mesh | null>;
-}) {
-  return (
-    <mesh ref={meshRef} renderOrder={0} frustumCulled={false}>
-      <circleGeometry args={[1, 28]} />
-      <meshBasicMaterial
-        colorWrite={false}
-        depthWrite
-        depthTest
-        side={DoubleSide}
-      />
-    </mesh>
-  );
-}
-
 export function FaceOccluder() {
-  const groupRef = useRef<Group>(null);
-  const leftRef = useRef<Mesh>(null);
-  const rightRef = useRef<Mesh>(null);
+  const meshRef = useRef<Mesh>(null);
+  const anchor = useRef(new Vector3());
+  const quat = useRef(new Quaternion());
+  const tmp = useRef(new Vector3());
 
   useFrame(() => {
-    const left = leftRef.current;
-    const right = rightRef.current;
-    if (!left || !right) return;
+    const mesh = meshRef.current;
+    if (!mesh) return;
 
     const { landmarks, hasFace, videoWidth, videoHeight, trackingFrame } =
       useTryOnStore.getState();
-    if (!hasFace || !landmarks || landmarks.length < 455) {
-      left.visible = false;
-      right.visible = false;
+    if (!hasFace || !landmarks || landmarks.length < 468 || !trackingFrame) {
+      mesh.visible = false;
       return;
     }
 
     const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-    const faceScale = trackingFrame?.scale ?? 0.7;
+    const scale = trackingFrame.scale > 0 ? trackingFrame.scale : 0.7;
 
-    const place = (
-      mesh: Mesh,
-      earIdx: number,
-      eyeOuterIdx: number,
-    ) => {
-      const earLm = landmarks[earIdx];
-      const eyeLm = landmarks[eyeOuterIdx];
-      if (!earLm) {
-        mesh.visible = false;
-        return;
-      }
-      const ear = landmarkToWorld(earLm, aspect);
-      const eye = eyeLm ? landmarkToWorld(eyeLm, aspect) : null;
+    // Anchor on the mid-eye / bridge — same source the glasses fit uses, so the
+    // occluder and frames share one coordinate origin (no relative drift).
+    const midLm =
+      landmarks[LM.MID_EYES] ?? landmarks[LM.NOSE_BRIDGE] ?? landmarks[LM.NOSE_TIP];
+    if (!midLm) {
+      mesh.visible = false;
+      return;
+    }
+    const mid = landmarkToWorld(midLm, aspect);
+    anchor.current.set(mid.x, mid.y, mid.z);
 
-      // Card centered on ear, slightly toward the eye so the temple tip
-      // tucks behind the ear rather than stopping short of it.
-      let x = ear.x;
-      let y = ear.y;
-      if (eye) {
-        x = ear.x * 0.85 + eye.x * 0.15;
-        y = ear.y * 0.9 + eye.y * 0.1;
-      }
+    // Head orientation from the real face matrix (already mirrored for video).
+    const r = trackingFrame.rotation;
+    quat.current.set(r.x, r.y, r.z, r.w).normalize();
 
-      // Ear depth — behind glasses front (z≈0.12), in front of temple tips.
-      // Clamp so we never wipe the lens plane when leaning in.
-      const z = Math.min(ear.z - 0.04, 0.04);
+    // Ellipsoid half-extents in scene units, proportional to fit scale.
+    // Wider than the lenses (cover cheeks/ears), tall enough for brow→jaw,
+    // deep enough that temple tips fall behind the back pole.
+    const rx = 0.62 * scale; // half head width
+    const ry = 0.82 * scale; // half head height
+    const rz = 0.85 * scale; // half head depth (front↔back)
 
-      // Cover ear + hair tuck; ~0.55 of hinge→ear span, floored by face scale.
-      const span = eye
-        ? Math.hypot(ear.x - eye.x, ear.y - eye.y)
-        : faceScale * 0.35;
-      const radius = Math.max(0.1, Math.min(0.28, span * 0.55, faceScale * 0.38));
+    // Push the ellipsoid back along the head's own forward axis so its FRONT
+    // pole sits just behind the lens plane: lenses/near-temple stay visible,
+    // everything deeper (far temple, arms behind ears) is occluded.
+    // Head forward (+Z of the head) rotated into scene space:
+    tmp.current.set(0, 0, 1).applyQuaternion(quat.current);
+    const frontBias = 0.16 * scale; // lens plane clearance in front of the head
+    mesh.position.copy(anchor.current).addScaledVector(tmp.current, frontBias - rz);
 
-      mesh.visible = true;
-      mesh.position.set(x, y, z);
-      mesh.scale.setScalar(radius);
-      // Face camera (ortho): card is a depth stamp in screen space at the ear.
-      mesh.rotation.set(0, 0, 0);
-    };
-
-    // Landmark indices are in image space; landmarkToWorld mirrors for CSS flip.
-    // 234 = subject left ear region, 454 = subject right.
-    place(left, LM.LEFT_EAR, LM.LEFT_EYE_OUTER);
-    place(right, LM.RIGHT_EAR, LM.RIGHT_EYE_OUTER);
+    mesh.quaternion.copy(quat.current);
+    mesh.scale.set(rx, ry, rz);
+    mesh.visible = true;
   });
 
   return (
-    <group ref={groupRef}>
-      <EarCard meshRef={leftRef} />
-      <EarCard meshRef={rightRef} />
-    </group>
+    <mesh ref={meshRef} renderOrder={0} frustumCulled={false}>
+      <sphereGeometry args={[1, 24, 18]} />
+      <meshBasicMaterial colorWrite={false} depthWrite depthTest />
+    </mesh>
   );
 }

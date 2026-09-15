@@ -1,6 +1,7 @@
 "use client";
 
 import { Canvas, useThree } from "@react-three/fiber";
+import { Environment, Lightformer } from "@react-three/drei";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
@@ -124,10 +125,40 @@ function Scene() {
   return (
     <>
       <CameraAspectSync />
-      <ambientLight intensity={0.75} />
-      <directionalLight position={[2, 3, 4]} intensity={1.1} />
-      <directionalLight position={[-3, 1, 2]} intensity={0.45} />
-      {/* Depth-only face oval — temples cull behind head; Z-clamped under lens plane. */}
+      {/* Key + fill for shape; the Environment supplies realistic reflections. */}
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[2, 3, 4]} intensity={0.9} />
+      <directionalLight position={[-3, 1, 2]} intensity={0.35} />
+      {/* Self-contained studio env map (no external HDRI): soft box lights that
+          give metal temples and lenses real specular highlights + reflections.
+          background={false} keeps the overlay transparent over the webcam. */}
+      <Environment resolution={128} background={false}>
+        <Lightformer
+          intensity={2.2}
+          position={[0, 1.5, 3]}
+          scale={[6, 3, 1]}
+          color="#ffffff"
+        />
+        <Lightformer
+          intensity={1.1}
+          position={[-3, 0.5, 2]}
+          scale={[3, 4, 1]}
+          color="#dfe8ff"
+        />
+        <Lightformer
+          intensity={1.1}
+          position={[3, 0.5, 2]}
+          scale={[3, 4, 1]}
+          color="#fff2e0"
+        />
+        <Lightformer
+          intensity={0.8}
+          position={[0, -2, 1]}
+          scale={[6, 2, 1]}
+          color="#cfd6e0"
+        />
+      </Environment>
+      {/* Depth-only head occluder — far temple culls behind the head at any yaw. */}
       <FaceOccluder />
       <GlassesAnchor />
     </>
