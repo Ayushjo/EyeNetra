@@ -17,6 +17,8 @@ export type FrameSku = {
   thumbnailColor: string;
   /** Fit metadata in millimeters — used by useFitEngine for non-uniform scaling. */
   fit: {
+    /** Explicit GLB material roles; add lens material names when importing a SKU. */
+    lensMaterialNames?: string[];
     frameWidthMm: number;
     templeLengthMm: number;
     bridgeWidthMm: number;
@@ -50,6 +52,7 @@ export const FRAMES: FrameSku[] = [
     glbPath: "/models/aviator-sunglasses.glb",
     thumbnailColor: "#1a1a1a",
     fit: {
+      lensMaterialNames: ["Glass_tinted"],
       frameWidthMm: 140,
       templeLengthMm: 140,
       bridgeWidthMm: 18,
@@ -97,6 +100,7 @@ export const FRAMES: FrameSku[] = [
     glbPath: "/models/glasses-round-frame.glb",
     thumbnailColor: "#2c1810",
     fit: {
+      lensMaterialNames: ["000_Glass"],
       frameWidthMm: 132,
       templeLengthMm: 145,
       bridgeWidthMm: 20,
@@ -143,15 +147,16 @@ export const FRAMES: FrameSku[] = [
     glbPath: "/models/sport-glasses-b307.glb",
     thumbnailColor: "#0a1628",
     fit: {
+      lensMaterialNames: ["B307_REALphong1SG2"],
       frameWidthMm: 138,
       templeLengthMm: 130,
       bridgeWidthMm: 16,
       nosePadOffsetMm: 1,
-      // Sport GLB is authored upside-down — Z=π at load; L/R undo in GlassesModel.
-      modelEuler: [0, 0, Math.PI],
+      // GLB already carries its OBJ-to-glTF axis conversion. Keep it upright.
+      modelEuler: [0, 0, 0],
       scaleMul: 1.4,
       yOffsetFrac: 0.05,
-      perspYOffsetCm: -0.3,
+      perspYOffsetCm: 0.8,
       perspScaleTune: 1.0,
     },
     variants: [
@@ -190,6 +195,7 @@ export const FRAMES: FrameSku[] = [
     glbPath: "/models/ai-generated-frames.glb",
     thumbnailColor: "#3d2a1a",
     fit: {
+      lensMaterialNames: ["Material_0.001"],
       frameWidthMm: 136,
       templeLengthMm: 142,
       bridgeWidthMm: 19,

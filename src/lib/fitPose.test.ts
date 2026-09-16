@@ -117,7 +117,7 @@ describe("computePose fixtures", () => {
     expect(run(close).scale).toBeGreaterThan(run(front).scale);
   });
 
-  it("calib scale floors at 0.55× live when profile is too small", () => {
+  it("corrupt calibration falls back to live fit rather than collapsing size", () => {
     const front = byId.front;
     const pose = computePose({
       landmarks: front.landmarks,
@@ -135,8 +135,8 @@ describe("computePose fixtures", () => {
     });
     expect(pose).not.toBeNull();
     if (!pose) return;
-    expect(pose.calibScale).not.toBeNull();
-    expect(pose.scale).toBeGreaterThanOrEqual(pose.liveScale * 0.55 - 1e-6);
+    expect(pose.calibScale).toBeNull();
+    expect(pose.scale).toBe(pose.liveScale);
   });
 
   it("calib path ignores scaleMul (mm-only; scaleMul blew up size)", () => {

@@ -2,120 +2,65 @@
 
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
-import { BufferAttribute, BufferGeometry, DoubleSide, type Mesh } from "three";
-import { PERSPECTIVE_FOV_DEG, perspectiveHeadDepth } from "@/lib/fitPose";
-import { delaunay, type P2 } from "@/lib/faceMesh";
-import { LM } from "@/lib/mediapipe/constants";
+import { BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Vector3, type Group, type Mesh } from "three";
+import { perspectiveHeadDepth, computePosePerspective } from "@/lib/fitPose";
+import { FACE_TRIANGLES } from "@/lib/faceMesh";
+import { setPosteriorCap, writeFaceSurface } from "@/lib/faceOcclusion";
 import { useTryOnStore } from "@/store/tryOnStore";
 
-/**
- * Real face-mesh depth occluder (perspective mode only).
- *
- * Builds a solid surface from MediaPipe's 468 landmarks, unprojected into the
- * SAME metric perspective space the glasses use (head depth from the transform
- * matrix), so it hugs the actual face. Rendered depth-only (colorWrite off): it
- * writes depth but no pixels, so the webcam face shows through and any glasses
- * geometry that passes BEHIND the face — the far temple on a turn, the arm as it
- * reaches the ear — is culled exactly where a real face would hide it.
- *
- * Topology (triangle indices) is computed once and reused; only vertex depths
- * update per frame. It is independent of the selected glasses model, so it works
- * for every frame in the catalog and every new one added.
- *
- * Perf: one unproject per landmark per frame (468), no allocation in the loop.
+/** The face and glasses inherit one filtered pose. The posterior cap is only
+ * an approximation: MediaPipe's face landmarks do not include ears or hair.
  */
-
-const N = 478; // MediaPipe face landmark count (with iris)
-const DEPTH_SCALE = 26; // normalized-z → cm doming. Lower = flatter surface,
-// which avoids stray forward vertex spikes that chop the thin temple arm into a
-// dashed line as it crosses the face edge.
-const MESH_BIAS = 1.6; // cm: push the mesh back BEHIND the skin surface. The
-// temple arm rests in front of the head, so a small bias let the mesh eat it
-// ("temple invisible against the skin"). Biasing it back keeps the near temple
-// visible across the cheek; the back-cap ellipsoid still hides the far temple.
-
-export function FaceMeshOccluder() {
+export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Group | null> }) {
   const meshRef = useRef<Mesh>(null);
-  const indexReady = useRef(false);
-  const posArr = useRef<Float32Array>(new Float32Array(N * 3));
-
+  const capRef = useRef<Mesh>(null);
+  const inverse = useRef(new Matrix4());
+  const vertex = useRef(new Vector3());
   const geometry = useMemo(() => {
     const g = new BufferGeometry();
-    g.setAttribute("position", new BufferAttribute(posArr.current, 3));
+    g.setAttribute("position", new BufferAttribute(new Float32Array(468 * 3), 3));
+    g.setIndex(FACE_TRIANGLES);
     return g;
   }, []);
 
+  // Per-frame hot path: 468 vertex updates; geometry/index buffers are reused.
   useFrame(() => {
     const mesh = meshRef.current;
-    if (!mesh) return;
-
-    const { landmarks, hasFace, videoWidth, videoHeight, transformMatrix, renderMode } =
-      useTryOnStore.getState();
-
-    if (
-      renderMode !== "perspective" ||
-      !hasFace ||
-      !landmarks ||
-      landmarks.length < 468 ||
-      !transformMatrix
-    ) {
-      mesh.visible = false;
-      return;
-    }
-
+    const cap = capRef.current;
+    if (!mesh || !cap) return;
+    mesh.visible = cap.visible = false;
+    const state = useTryOnStore.getState();
+    const { landmarks, hasFace, videoWidth, videoHeight, transformMatrix, renderMode, perspTune } = state;
+    if (renderMode !== "perspective" || !hasFace || !landmarks || !anchorRef.current) return;
     const depth = perspectiveHeadDepth(transformMatrix);
-    if (depth == null) {
-      mesh.visible = false;
-      return;
-    }
-
+    if (depth == null) return;
     const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-    const tanHalf = Math.tan((PERSPECTIVE_FOV_DEG * Math.PI) / 180 / 2);
-    const midEye = landmarks[LM.MID_EYES] ?? landmarks[LM.NOSE_BRIDGE];
-    const midZ = midEye ? midEye.z : 0;
-
-    // Compute the triangulation once from the first (front-ish) frame.
-    if (!indexReady.current) {
-      const p2: P2[] = new Array(N);
-      for (let i = 0; i < N; i++) {
-        const lm = landmarks[i];
-        p2[i] = lm ? { x: 0.5 - lm.x, y: 0.5 - lm.y } : { x: 0, y: 0 };
-      }
-      const idx = delaunay(p2);
-      if (idx.length >= 3) {
-        geometry.setIndex(idx);
-        indexReady.current = true;
-      } else {
-        mesh.visible = false;
-        return;
-      }
-    }
-
-    const arr = posArr.current;
-    for (let i = 0; i < N; i++) {
-      const lm = landmarks[i];
-      const base = i * 3;
-      if (!lm) {
-        arr[base] = 0;
-        arr[base + 1] = 0;
-        arr[base + 2] = -depth;
-        continue;
-      }
-      const di = depth + (lm.z - midZ) * DEPTH_SCALE + MESH_BIAS;
-      const ndcX = (0.5 - lm.x) * 2; // mirrored to match the flipped video
-      const ndcY = (0.5 - lm.y) * 2;
-      arr[base] = ndcX * di * tanHalf * aspect;
-      arr[base + 1] = ndcY * di * tanHalf;
-      arr[base + 2] = -di;
-    }
-    (geometry.getAttribute("position") as BufferAttribute).needsUpdate = true;
-    geometry.computeBoundingSphere();
-    mesh.visible = true;
+    const fit = state.selectedFrame().fit;
+    const pose = computePosePerspective({
+      landmarks, transformMatrix, aspect, frameWidthMm: fit.frameWidthMm,
+      scaleTune: (fit.perspScaleTune ?? 1) * perspTune.scaleTune,
+      yOffsetCm: (fit.perspYOffsetCm ?? 0.8) + perspTune.yOffsetCm - 0.8,
+      zOffsetCm: (fit.perspZOffsetCm ?? 0.6) + perspTune.zOffsetCm - 0.6,
+    });
+    if (!pose) return;
+    inverse.current.compose(pose.position, pose.quaternion, vertex.current.setScalar(pose.scale)).invert();
+    const attribute = geometry.getAttribute("position") as BufferAttribute;
+    const positions = attribute.array as Float32Array;
+    if (!writeFaceSurface(landmarks, depth, aspect, inverse.current, positions, vertex.current)) return;
+    attribute.needsUpdate = true;
+    setPosteriorCap(positions, cap.position, cap.scale);
+    mesh.visible = cap.visible = true;
   });
 
   return (
-    <mesh ref={meshRef} geometry={geometry} renderOrder={0} frustumCulled={false}>
-      <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
-    </mesh>
+    <>
+      <mesh ref={meshRef} geometry={geometry} visible={false} renderOrder={0} frustumCulled={false}>
+        <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
+      </mesh>
+      <mesh ref={capRef} visible={false} renderOrder={0} frustumCulled={false}>
+        <sphereGeometry args={[1, 24, 18]} />
+        <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
+      </mesh>
+    </>
   );
 }

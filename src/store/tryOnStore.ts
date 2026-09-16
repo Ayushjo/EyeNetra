@@ -112,7 +112,7 @@ type TryOnState = {
 type TryOnStore = ReturnType<typeof createTryOnStore>;
 
 /** Bump when store shape/actions change so Fast Refresh doesn't keep a stale singleton. */
-const STORE_VERSION = 6;
+const STORE_VERSION = 7;
 
 function createTryOnStore() {
   return create<TryOnState>((set, get) => ({

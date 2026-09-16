@@ -32,6 +32,7 @@ function GlassesAnchor() {
   const offsetRef = useRef<Group>(null);
   useFitEngine(anchorRef);
 
+  const renderMode = useTryOnStore((s) => s.renderMode);
   const frameId = useTryOnStore((s) => s.selectedFrameId);
   const variantId = useTryOnStore((s) => s.selectedVariantId);
   const showFitDebug = useTryOnStore((s) => s.showFitDebug);
@@ -82,11 +83,9 @@ function GlassesAnchor() {
 
   return (
     <group ref={anchorRef}>
-      {/* Depth-only head occluder, parented to the anchor so it inherits the
-          head pose + scale automatically (works in ortho AND perspective).
-          Sits behind the lens plane and bulges into the head (local -Z), so
-          the far temple recedes behind it while lenses/near temple stay
-          visible. colorWrite off → invisible, webcam shows through. */}
+      <FaceMeshOccluder anchorRef={anchorRef} />
+      {/* Legacy ortho head mask. Perspective uses face-sized geometry. */}
+      {renderMode === "ortho" && (
       <mesh
         renderOrder={0}
         frustumCulled={false}
@@ -101,6 +100,7 @@ function GlassesAnchor() {
           side={DoubleSide}
         />
       </mesh>
+      )}
       {/* Fixed local offset — set once; not recomputed per frame.
           Visibility is owned by useFitEngine (do NOT set visible={false} here —
           React re-applies JSX props and would fight the imperative show). */}
@@ -202,7 +202,6 @@ function Scene() {
       {/* Real face-mesh depth occluder (perspective): precise front/side temple
           occlusion. The anchor ellipsoid inside GlassesAnchor still covers the
           back of the head for the far temple on strong turns. */}
-      <FaceMeshOccluder />
       <GlassesAnchor />
     </>
   );
@@ -214,7 +213,7 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
       <Canvas
         dpr={[1, 1.5]}
         gl={{
-          antialias: false,
+          antialias: true,
           alpha: true,
           powerPreference: "low-power",
         }}

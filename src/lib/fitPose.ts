@@ -99,7 +99,10 @@ export function resolveSceneScale(
   faceProfile: FaceProfile | null,
 ): { scale: number; liveScale: number; calibScale: number | null } {
   const liveScale = eyeSpanScale(landmarks, aspect, scaleMul);
-  if (!faceProfile || !(faceProfile.faceWidthMm > 0)) {
+  // Reject corrupt stored measurements; do not turn an invalid profile into
+  // an apparently calibrated, tiny frame. Broad bounds are input guards only.
+  if (!faceProfile || !Number.isFinite(faceProfile.faceWidthMm) ||
+      faceProfile.faceWidthMm < 20 || faceProfile.faceWidthMm > 250) {
     return { scale: liveScale, liveScale, calibScale: null };
   }
   const liveSpan = outerEyeSpanScene(landmarks, aspect);

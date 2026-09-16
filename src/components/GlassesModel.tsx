@@ -29,26 +29,28 @@ function isLensName(name: string): boolean {
 
 function applyVariant(
   mat: MeshStandardMaterial | MeshPhysicalMaterial,
-  name: string,
+  lens: boolean,
   variant: FrameVariant,
   depthTest: boolean,
   quality: "live" | "capture",
 ) {
   mat.side = DoubleSide;
-  if (isLensName(name)) {
+  if (lens) {
     mat.color = new Color(variant.lensColor);
     mat.transparent = true;
-    mat.opacity = Math.min(0.55, Math.max(0.22, variant.lensOpacity));
+    mat.opacity = Math.min(1, Math.max(0, variant.lensOpacity));
+    mat.map = null; // Lens tint comes from the variant, not a baked opaque texture.
+    mat.metalness = 0;
     mat.depthWrite = false;
     mat.depthTest = depthTest;
     if (mat instanceof MeshPhysicalMaterial || quality === "capture") {
       mat.metalness = 0;
       mat.roughness = 0.05;
-      mat.envMapIntensity = 1.35;
+      mat.envMapIntensity = quality === "capture" ? 0.85 : 0.55;
       if (mat instanceof MeshPhysicalMaterial) {
-        mat.clearcoat = 1;
+        mat.clearcoat = 0.25;
         mat.clearcoatRoughness = 0.08;
-        mat.reflectivity = 0.6;
+        mat.reflectivity = 0.3;
         mat.ior = 1.5;
         mat.thickness = 0.2;
       }
@@ -61,7 +63,7 @@ function applyVariant(
   }
 
   mat.color = new Color(variant.frameColor);
-  mat.metalness = Math.min(0.55, Math.max(0.15, variant.metalness));
+  mat.metalness = Math.min(1, Math.max(0, variant.metalness));
   mat.roughness = Math.max(0.22, variant.roughness);
   mat.envMapIntensity = quality === "capture" ? 1.1 : 0.45;
   mat.transparent = false;
@@ -202,6 +204,7 @@ export function GlassesModel({
   }, [glbPath, fit.modelEuler, pivot]);
 
   useEffect(() => {
+    const owned: (MeshStandardMaterial | MeshPhysicalMaterial)[] = [];
     cloned.traverse((obj: Object3D) => {
       if (!(obj instanceof Mesh)) return;
       const name = obj.name || "";
@@ -210,7 +213,10 @@ export function GlassesModel({
 
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
       mats.forEach((mat, i) => {
-        const usePhysical = quality === "capture" && isLensName(name);
+        const lens = fit.lensMaterialNames
+          ? fit.lensMaterialNames.includes(mat.name)
+          : isLensName(mat.name || name);
+        const usePhysical = lens;
         let next: MeshStandardMaterial | MeshPhysicalMaterial;
         if (usePhysical) {
           next = new MeshPhysicalMaterial();
@@ -225,12 +231,16 @@ export function GlassesModel({
         } else {
           next = new MeshStandardMaterial();
         }
-        applyVariant(next, name, variant, depthTest, quality);
+        next.name = mat.name;
+        // Retain authored transparent pads instead of painting them opaque.
+        if (lens || !mat.transparent) applyVariant(next, lens, variant, depthTest, quality);
+        owned.push(next);
         if (Array.isArray(obj.material)) obj.material[i] = next;
         else obj.material = next;
       });
     });
-  }, [cloned, variant, depthTest, quality]);
+    return () => owned.forEach(mat => mat.dispose());
+  }, [cloned, variant, depthTest, quality, fit.lensMaterialNames]);
 
   return <primitive object={cloned} />;
 }

@@ -77,12 +77,13 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     } = state;
 
     const providerKey = trackingProviderId ?? "mediapipe";
+    const filterKey = `${providerKey}:${renderMode}`;
     if (
       lastFrameId.current !== selectedFrameId ||
-      lastProvider.current !== providerKey
+      lastProvider.current !== filterKey
     ) {
       lastFrameId.current = selectedFrameId;
-      lastProvider.current = providerKey;
+      lastProvider.current = filterKey;
       initialized.current = false;
       loggedApply.current = false;
       loggedPoseNull.current = false;
