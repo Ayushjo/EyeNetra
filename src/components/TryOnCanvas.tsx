@@ -18,6 +18,7 @@ import {
 } from "three";
 import { PERSPECTIVE_FOV_DEG } from "@/lib/fitPose";
 import { GlassesModel, type PivotDebug } from "@/components/GlassesModel";
+import { FaceMeshOccluder } from "@/components/FaceMeshOccluder";
 import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -198,7 +199,10 @@ function Scene() {
           color="#cfd6e0"
         />
       </Environment>
-      {/* Occluder is now parented inside GlassesAnchor (inherits head pose). */}
+      {/* Real face-mesh depth occluder (perspective): precise front/side temple
+          occlusion. The anchor ellipsoid inside GlassesAnchor still covers the
+          back of the head for the far temple on strong turns. */}
+      <FaceMeshOccluder />
       <GlassesAnchor />
     </>
   );

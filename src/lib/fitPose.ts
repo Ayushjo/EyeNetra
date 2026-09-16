@@ -243,6 +243,23 @@ export type PerspectiveInput = {
 let lastPerspLogMs = 0;
 
 /**
+ * Head distance from camera (cm) from the transform matrix — the same depth the
+ * glasses anchor uses, so the face-mesh occluder lands in the same metric space.
+ */
+export function perspectiveHeadDepth(
+  transformMatrix: number[] | null,
+): number | null {
+  if (!transformMatrix || transformMatrix.length < 16) return null;
+  _mp.fromArray(transformMatrix).transpose();
+  _mp.decompose(_posP, _quatP, _sclP);
+  if (_posP.lengthSq() < 1e-10) {
+    _mp.fromArray(transformMatrix);
+    _mp.decompose(_posP, _quatP, _sclP);
+  }
+  return Math.max(5, Math.abs(_posP.z) || 40);
+}
+
+/**
  * Perspective-metric pose (Ray-Ban-Meta-style).
  *
  * Unlike the ortho path (which fakes Z and collapses temple arms), this places
