@@ -1,18 +1,23 @@
 "use client";
 
 import { Canvas, useThree } from "@react-three/fiber";
-import { Environment, Lightformer } from "@react-three/drei";
+import {
+  Environment,
+  Lightformer,
+  OrthographicCamera,
+  PerspectiveCamera,
+} from "@react-three/drei";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AxesHelper,
+  DoubleSide,
   Group,
-  OrthographicCamera,
   SRGBColorSpace,
   Vector3,
 } from "three";
+import { PERSPECTIVE_FOV_DEG } from "@/lib/fitPose";
 import { GlassesModel, type PivotDebug } from "@/components/GlassesModel";
-import { FaceOccluder } from "@/components/FaceOccluder";
 import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -76,6 +81,25 @@ function GlassesAnchor() {
 
   return (
     <group ref={anchorRef}>
+      {/* Depth-only head occluder, parented to the anchor so it inherits the
+          head pose + scale automatically (works in ortho AND perspective).
+          Sits behind the lens plane and bulges into the head (local -Z), so
+          the far temple recedes behind it while lenses/near temple stay
+          visible. colorWrite off → invisible, webcam shows through. */}
+      <mesh
+        renderOrder={0}
+        frustumCulled={false}
+        position={[0, -0.08, -1.15]}
+        scale={[0.44, 0.82, 0.95]}
+      >
+        <sphereGeometry args={[1, 24, 18]} />
+        <meshBasicMaterial
+          colorWrite={false}
+          depthWrite
+          depthTest
+          side={DoubleSide}
+        />
+      </mesh>
       {/* Fixed local offset — set once; not recomputed per frame.
           Visibility is owned by useFitEngine (do NOT set visible={false} here —
           React re-applies JSX props and would fight the imperative show). */}
@@ -94,37 +118,53 @@ function GlassesAnchor() {
   );
 }
 
-function CameraAspectSync() {
+/**
+ * Renders the active camera for the current render mode. Perspective uses the
+ * MediaPipe FOV so the metric matrix pose projects correctly; ortho is the
+ * legacy overlay camera. makeDefault swaps the active camera instantly on
+ * toggle — no Canvas remount.
+ */
+function Cameras() {
+  const renderMode = useTryOnStore((s) => s.renderMode);
   const videoWidth = useTryOnStore((s) => s.videoWidth);
   const videoHeight = useTryOnStore((s) => s.videoHeight);
-  const { camera, size } = useThree();
+  const { size } = useThree();
+  const aspect =
+    size.height > 0
+      ? size.width / size.height
+      : videoHeight > 0
+        ? videoWidth / videoHeight
+        : 16 / 9;
 
-  useEffect(() => {
-    const aspect =
-      size.height > 0
-        ? size.width / size.height
-        : videoHeight > 0
-          ? videoWidth / videoHeight
-          : 16 / 9;
-    if (camera instanceof OrthographicCamera) {
-      camera.left = -aspect;
-      camera.right = aspect;
-      camera.top = 1;
-      camera.bottom = -1;
-      camera.near = -50;
-      camera.far = 50;
-      camera.zoom = 1;
-      camera.updateProjectionMatrix();
-    }
-  }, [camera, videoWidth, videoHeight, size.width, size.height]);
-
-  return null;
+  if (renderMode === "perspective") {
+    return (
+      <PerspectiveCamera
+        makeDefault
+        fov={PERSPECTIVE_FOV_DEG}
+        near={1}
+        far={10000}
+        position={[0, 0, 0]}
+      />
+    );
+  }
+  return (
+    <OrthographicCamera
+      makeDefault
+      left={-aspect}
+      right={aspect}
+      top={1}
+      bottom={-1}
+      near={-50}
+      far={50}
+      position={[0, 0, 5]}
+    />
+  );
 }
 
 function Scene() {
   return (
     <>
-      <CameraAspectSync />
+      <Cameras />
       {/* Key + fill for shape; the Environment supplies realistic reflections. */}
       <ambientLight intensity={0.35} />
       <directionalLight position={[2, 3, 4]} intensity={0.9} />
@@ -158,33 +198,17 @@ function Scene() {
           color="#cfd6e0"
         />
       </Environment>
-      {/* Depth-only head occluder — far temple culls behind the head at any yaw. */}
-      <FaceOccluder />
+      {/* Occluder is now parented inside GlassesAnchor (inherits head pose). */}
       <GlassesAnchor />
     </>
   );
 }
 
 export function TryOnCanvas({ className = "" }: { className?: string }) {
-  const videoWidth = useTryOnStore((s) => s.videoWidth);
-  const videoHeight = useTryOnStore((s) => s.videoHeight);
-  const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-
   return (
     <div className={`pointer-events-none absolute inset-0 z-20 ${className}`}>
       <Canvas
-        orthographic
         dpr={[1, 1.5]}
-        camera={{
-          position: [0, 0, 5],
-          zoom: 1,
-          near: -50,
-          far: 50,
-          left: -aspect,
-          right: aspect,
-          top: 1,
-          bottom: -1,
-        }}
         gl={{
           antialias: false,
           alpha: true,

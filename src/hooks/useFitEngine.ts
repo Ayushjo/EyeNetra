@@ -3,7 +3,7 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import { Quaternion, Vector3, type Object3D } from "three";
-import { computePose } from "@/lib/fitPose";
+import { computePose, computePosePerspective } from "@/lib/fitPose";
 import { OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -72,6 +72,8 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       debugPoseLog,
       faceProfile,
       trackingProviderId,
+      renderMode,
+      perspTune,
     } = state;
 
     const providerKey = trackingProviderId ?? "mediapipe";
@@ -98,7 +100,37 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     let calibScale: number | null = null;
     let faceOk = false;
 
-    if (providerKey === "mediapipe") {
+    if (providerKey === "mediapipe" && renderMode === "perspective") {
+      // Metric perspective path — computed here so the render-mode toggle is
+      // instant (no provider restart). Uses store landmarks + matrix.
+      if (hasFace && landmarks && landmarks.length >= 468 && transformMatrix) {
+        const sku = state.selectedFrame();
+        const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
+        const pose = computePosePerspective({
+          landmarks,
+          transformMatrix,
+          aspect,
+          frameWidthMm: sku.fit.frameWidthMm,
+          scaleTune: perspTune.scaleTune,
+          yOffsetCm: perspTune.yOffsetCm,
+          zOffsetCm: perspTune.zOffsetCm,
+          debugLog: debugPoseLog,
+        });
+        if (pose) {
+          faceOk = true;
+          pos = { x: pose.position.x, y: pose.position.y, z: pose.position.z };
+          rot = {
+            x: pose.quaternion.x,
+            y: pose.quaternion.y,
+            z: pose.quaternion.z,
+            w: pose.quaternion.w,
+          };
+          scale = pose.scale;
+          liveScale = pose.liveScale;
+          calibScale = pose.calibScale;
+        }
+      }
+    } else if (providerKey === "mediapipe") {
       // Prefer provider frame — avoids hide when store recompute races / fails.
       if (trackingFrame?.hasFace) {
         faceOk = true;

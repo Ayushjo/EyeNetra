@@ -20,6 +20,15 @@ export type CaptureRefine = {
   dScale: number;
 };
 
+export type RenderMode = "ortho" | "perspective";
+
+/** Live-tunable perspective fit params (cm), shared across frames for now. */
+export type PerspectiveTune = {
+  yOffsetCm: number;
+  zOffsetCm: number;
+  scaleTune: number;
+};
+
 export type CaptureState = {
   imageUrl: string;
   landmarks: LandmarkPoint[];
@@ -52,6 +61,10 @@ type TryOnState = {
   trackingFrame: TrackingFrame | null;
   /** Active tracking engine id (swappable providers). */
   trackingProviderId: TrackingProviderId;
+  /** ortho = legacy overlay; perspective = metric matrix path (temples, pitch). */
+  renderMode: RenderMode;
+  /** Live-tunable perspective fit offsets (cm) + scale multiplier. */
+  perspTune: PerspectiveTune;
   /** Log decomposed Euler while head turns (console). */
   debugPoseLog: boolean;
   /** Show AxesHelper at the face-matrix anchor (nose-bridge pivot check). */
@@ -71,6 +84,8 @@ type TryOnState = {
   setFrame: (frameId: string) => void;
   setVariant: (variantId: string) => void;
   setTrackingProviderId: (id: TrackingProviderId) => void;
+  setRenderMode: (mode: RenderMode) => void;
+  setPerspTune: (tune: Partial<PerspectiveTune>) => void;
   setTrackingFrame: (frame: TrackingFrame | null) => void;
   setDebugPoseLog: (value: boolean) => void;
   setShowFitDebug: (value: boolean) => void;
@@ -97,7 +112,7 @@ type TryOnState = {
 type TryOnStore = ReturnType<typeof createTryOnStore>;
 
 /** Bump when store shape/actions change so Fast Refresh doesn't keep a stale singleton. */
-const STORE_VERSION = 5;
+const STORE_VERSION = 6;
 
 function createTryOnStore() {
   return create<TryOnState>((set, get) => ({
@@ -117,6 +132,8 @@ function createTryOnStore() {
     capabilities: null,
     trackingFrame: null,
     trackingProviderId: "mediapipe",
+    renderMode: "perspective",
+    perspTune: { yOffsetCm: 0.8, zOffsetCm: 0.6, scaleTune: 1.0 },
     debugPoseLog: true,
     showFitDebug: true,
   capture: null,
@@ -140,6 +157,9 @@ function createTryOnStore() {
     },
     setVariant: (variantId) => set({ selectedVariantId: variantId }),
     setTrackingProviderId: (id) => set({ trackingProviderId: id }),
+    setRenderMode: (mode) => set({ renderMode: mode }),
+    setPerspTune: (tune) =>
+      set({ perspTune: { ...get().perspTune, ...tune } }),
     setTrackingFrame: (frame) => {
       set({
         trackingFrame: frame,
@@ -202,6 +222,7 @@ function getOrCreateStore(): TryOnStore {
     typeof existing.getState().setTrackingProviderId === "function" &&
     typeof existing.getState().setTrackingFrame === "function" &&
     typeof existing.getState().setLastMediapipeScale === "function" &&
+    typeof existing.getState().setRenderMode === "function" &&
     existing.getState().trackingProviderId != null;
 
   if (existing && versionOk && shapeOk) {

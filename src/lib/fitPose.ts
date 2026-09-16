@@ -216,6 +216,125 @@ export function computePose(input: ComputePoseInput): FitPose | null {
   };
 }
 
+/**
+ * Vertical FOV (degrees) of the virtual camera. MediaPipe's face-geometry
+ * "environment" solves the transformation matrix assuming this perspective, so
+ * the R3F PerspectiveCamera MUST match it for the metric pose to project right.
+ */
+export const PERSPECTIVE_FOV_DEG = 63;
+
+const _mp = new Matrix4();
+const _posP = new Vector3();
+const _quatP = new Quaternion();
+const _sclP = new Vector3();
+
+export type PerspectiveInput = {
+  landmarks: LandmarkPoint[];
+  transformMatrix: number[] | null;
+  aspect: number;
+  frameWidthMm: number;
+  scaleTune: number;
+  yOffsetCm: number;
+  zOffsetCm: number;
+  modelCorrect?: Quaternion;
+  debugLog?: boolean;
+};
+
+let lastPerspLogMs = 0;
+
+/**
+ * Perspective-metric pose (Ray-Ban-Meta-style).
+ *
+ * Unlike the ortho path (which fakes Z and collapses temple arms), this places
+ * the glasses at a real 3D point in a perspective camera:
+ *  - DEPTH from the MediaPipe transform-matrix translation (metric cm). This is
+ *    what makes temples recede toward the ears and pitch/foreshortening correct.
+ *  - XY from the mid-eye landmark ray at that depth — reuses the reliable
+ *    landmark eye-anchoring instead of trusting the matrix origin offset.
+ *  - ROTATION from the matrix (real head orientation).
+ *  - SCALE in real world units: frameWidthMm → cm, so the frame is its true
+ *    physical size and apparent size tracks distance automatically (no
+ *    calibration needed for scale).
+ *
+ * MediaPipe matrix data is row-major → transpose for three.js. The webcam feed
+ * is CSS-mirrored, so we mirror X (position) and the quaternion's y,z.
+ */
+export function computePosePerspective(input: PerspectiveInput): FitPose | null {
+  const {
+    landmarks,
+    transformMatrix,
+    aspect,
+    frameWidthMm,
+    scaleTune,
+    yOffsetCm,
+    zOffsetCm,
+    modelCorrect = IDENTITY,
+    debugLog = false,
+  } = input;
+
+  if (!transformMatrix || transformMatrix.length < 16) return null;
+  const mid =
+    landmarks[LM.MID_EYES] ?? landmarks[LM.NOSE_BRIDGE];
+  const leftIris = landmarks[LM.LEFT_IRIS];
+  const rightIris = landmarks[LM.RIGHT_IRIS];
+  if (!mid || !leftIris || !rightIris) return null;
+
+  // Row-major → column-major, then decompose. Translation = head position (cm).
+  _mp.fromArray(transformMatrix).transpose();
+  _mp.decompose(_posP, _quatP, _sclP);
+  if (_posP.lengthSq() < 1e-10) {
+    // Fallback: some builds already deliver column-major.
+    _mp.fromArray(transformMatrix);
+    _mp.decompose(_posP, _quatP, _sclP);
+  }
+
+  // Depth: distance of the head from the camera (cm), always positive.
+  const depth = Math.max(5, Math.abs(_posP.z) || 40);
+
+  // Rotation: head orientation, corrected for the GLB's authored facing, then
+  // mirrored for the flipped video.
+  _quatP.multiply(modelCorrect);
+  _quatP.set(_quatP.x, -_quatP.y, -_quatP.z, _quatP.w).normalize();
+
+  // XY: cast a ray through the mid-eye landmark to `depth`. Mirror X for video.
+  const halfFov = (PERSPECTIVE_FOV_DEG * Math.PI) / 180 / 2;
+  const tanHalf = Math.tan(halfFov);
+  const ndcX = (0.5 - mid.x) * 2; // mirrored
+  const ndcY = (0.5 - mid.y) * 2;
+  const worldX = ndcX * depth * tanHalf * aspect;
+  const worldY = ndcY * depth * tanHalf;
+
+  const position = new Vector3(worldX, worldY, -depth);
+  // Nudge along the head's own down/forward so the frame sits on the nose
+  // bridge, not the pupils (yOffsetCm down, zOffsetCm toward camera).
+  const down = new Vector3(0, -1, 0).applyQuaternion(_quatP);
+  const fwd = new Vector3(0, 0, 1).applyQuaternion(_quatP);
+  position.addScaledVector(down, yOffsetCm);
+  position.addScaledVector(fwd, zOffsetCm);
+
+  // True physical width: model is normalized to width 1 → frameWidthMm in cm.
+  const scale = (frameWidthMm / 10) * scaleTune;
+
+  if (debugLog) {
+    const now = performance.now();
+    if (now - lastPerspLogMs > 500) {
+      lastPerspLogMs = now;
+      _euler.setFromQuaternion(_quatP, "YXZ");
+      console.info(
+        `[EyeNetra:persp] depth=${depth.toFixed(1)}cm pos=(${worldX.toFixed(1)},${worldY.toFixed(1)},${(-depth).toFixed(1)}) yaw=${((_euler.y * 180) / Math.PI).toFixed(1)} pitch=${((_euler.x * 180) / Math.PI).toFixed(1)} scale=${scale.toFixed(1)}`,
+      );
+    }
+  }
+
+  return {
+    position,
+    quaternion: _quatP.clone(),
+    scale,
+    liveScale: scale,
+    calibScale: null,
+  };
+}
+
 /** @deprecated Use computePose — kept as alias during provider migration. */
 export function computePose3D(
   landmarks: LandmarkPoint[],
