@@ -29,8 +29,10 @@ const N = 478; // MediaPipe face landmark count (with iris)
 const DEPTH_SCALE = 26; // normalized-z → cm doming. Lower = flatter surface,
 // which avoids stray forward vertex spikes that chop the thin temple arm into a
 // dashed line as it crosses the face edge.
-const MESH_BIAS = 0.5; // cm: push the mesh slightly back so it never eats the
-// frame front (glasses sit a touch in front of the face).
+const MESH_BIAS = 1.6; // cm: push the mesh back BEHIND the skin surface. The
+// temple arm rests in front of the head, so a small bias let the mesh eat it
+// ("temple invisible against the skin"). Biasing it back keeps the near temple
+// visible across the cheek; the back-cap ellipsoid still hides the far temple.
 
 export function FaceMeshOccluder() {
   const meshRef = useRef<Mesh>(null);
