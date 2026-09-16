@@ -133,9 +133,9 @@ function normalizeGlasses(
     }
   }
 
-  // Lengthen temples in model -Z so tips reach past the ear occluder cards.
-  // Front plane stays at z=0 (lens pin); only depth grows.
-  const TEMPLE_DEPTH_MUL = 1.4;
+  // Keep true temple length in the metric perspective path — the old 1.4×
+  // stretch (added for the ortho ear-cards) made arms overshoot past the ear.
+  const TEMPLE_DEPTH_MUL = 1.0;
   root.scale.z *= TEMPLE_DEPTH_MUL;
   root.updateMatrixWorld(true);
 
