@@ -90,8 +90,8 @@ function GlassesAnchor() {
       <mesh
         renderOrder={0}
         frustumCulled={false}
-        position={[0, -0.08, -1.15]}
-        scale={[0.44, 0.82, 0.95]}
+        position={[0, -0.02, -1.32]}
+        scale={[0.52, 0.98, 1.05]}
       >
         <sphereGeometry args={[1, 24, 18]} />
         <meshBasicMaterial

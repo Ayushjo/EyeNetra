@@ -26,7 +26,9 @@ import { useTryOnStore } from "@/store/tryOnStore";
  */
 
 const N = 478; // MediaPipe face landmark count (with iris)
-const DEPTH_SCALE = 42; // normalized-z → cm doming of the face surface
+const DEPTH_SCALE = 26; // normalized-z → cm doming. Lower = flatter surface,
+// which avoids stray forward vertex spikes that chop the thin temple arm into a
+// dashed line as it crosses the face edge.
 const MESH_BIAS = 0.5; // cm: push the mesh slightly back so it never eats the
 // frame front (glasses sit a touch in front of the face).
 
