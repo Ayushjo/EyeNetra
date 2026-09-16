@@ -30,6 +30,14 @@ export type FrameSku = {
     scaleMul: number;
     /** Vertical sit as fraction of scale (positive = lower on face). */
     yOffsetFrac: number;
+    /**
+     * Perspective-path fit overrides (cm). Each GLB is authored/centered
+     * differently, so these bake the correct sit per model. The global dev
+     * sliders add a delta on top of these for live tuning.
+     */
+    perspYOffsetCm?: number;
+    perspZOffsetCm?: number;
+    perspScaleTune?: number;
   };
   variants: FrameVariant[];
 };
@@ -50,6 +58,8 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.35,
       yOffsetFrac: 0.055,
+      perspYOffsetCm: 0.8,
+      perspScaleTune: 1.0,
     },
     variants: [
       {
@@ -94,6 +104,8 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.3,
       yOffsetFrac: 0.055,
+      perspYOffsetCm: 0.8,
+      perspScaleTune: 1.0,
     },
     variants: [
       {
@@ -139,6 +151,8 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, Math.PI],
       scaleMul: 1.4,
       yOffsetFrac: 0.05,
+      perspYOffsetCm: -0.3,
+      perspScaleTune: 1.0,
     },
     variants: [
       {
@@ -183,6 +197,8 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.32,
       yOffsetFrac: 0.055,
+      perspYOffsetCm: 0.6,
+      perspScaleTune: 1.0,
     },
     variants: [
       {

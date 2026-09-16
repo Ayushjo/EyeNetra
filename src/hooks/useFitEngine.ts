@@ -106,14 +106,19 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       if (hasFace && landmarks && landmarks.length >= 468 && transformMatrix) {
         const sku = state.selectedFrame();
         const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
+        // Per-frame baked offsets + dev-slider delta (sliders default to the
+        // same base so an untouched slider is a no-op).
+        const baseY = sku.fit.perspYOffsetCm ?? 0.8;
+        const baseZ = sku.fit.perspZOffsetCm ?? 0.6;
+        const baseScale = sku.fit.perspScaleTune ?? 1.0;
         const pose = computePosePerspective({
           landmarks,
           transformMatrix,
           aspect,
           frameWidthMm: sku.fit.frameWidthMm,
-          scaleTune: perspTune.scaleTune,
-          yOffsetCm: perspTune.yOffsetCm,
-          zOffsetCm: perspTune.zOffsetCm,
+          scaleTune: baseScale * perspTune.scaleTune,
+          yOffsetCm: baseY + (perspTune.yOffsetCm - 0.8),
+          zOffsetCm: baseZ + (perspTune.zOffsetCm - 0.6),
           debugLog: debugPoseLog,
         });
         if (pose) {
