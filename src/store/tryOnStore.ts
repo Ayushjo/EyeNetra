@@ -114,7 +114,7 @@ type TryOnState = {
   /** Dev: render the depth occluder (off = see raw glasses, no face masking). */
   showOccluder: boolean;
   /** Background fit-size calibration progress (customer-visible, no action needed). */
-  autoCalib: { n: number; sigmaMm: number | null; applied: boolean };
+  autoCalib: { n: number; sigmaMm: number | null; applied: boolean; reject?: string | null };
 
   selectedFrame: () => FrameSku;
   selectedVariant: () => FrameVariant;
@@ -136,7 +136,7 @@ type TryOnState = {
   setShowcase: (showcase: { name: string; brand: string } | null) => void;
   setShowDevControls: (value: boolean) => void;
   setShowOccluder: (value: boolean) => void;
-  setAutoCalib: (value: { n: number; sigmaMm: number | null; applied: boolean }) => void;
+  setAutoCalib: (value: { n: number; sigmaMm: number | null; applied: boolean; reject?: string | null }) => void;
   setCapture: (capture: CaptureState | null) => void;
   /** Architected refinement nudge for capture (not user-facing yet). */
   setCaptureRefine: (refine: Partial<CaptureRefine>) => void;

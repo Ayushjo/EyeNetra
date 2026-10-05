@@ -24,6 +24,41 @@ const SAMPLE_EVERY_MS = 100;
 /** Re-measure only if a later window is clearly tighter. */
 const IMPROVE_FACTOR = 0.8;
 
+export type AutoCalibReject =
+  | "no-face"
+  | "stale"
+  | "depth"
+  | "not-frontal"
+  | "eyes"
+  | null;
+
+/**
+ * Pure per-detection gate: returns the measurement to keep, or why the
+ * frame was rejected. Kept separate from the hook so it is unit-testable.
+ */
+export function evaluateAutoCalibSample(
+  tf: {
+    hasFace: boolean;
+    landmarks?: { x: number; y: number; z: number }[];
+    transformMatrix?: number[] | null;
+    timestampMs?: number;
+    depthCm?: number | null;
+    videoWidth: number;
+    videoHeight: number;
+  } | null,
+  lastTimestampMs: number,
+): { measure: FaceMeasurePx; aspect: number } | AutoCalibReject {
+  if (!tf || !tf.hasFace || !tf.landmarks || tf.landmarks.length < 478 || !tf.transformMatrix) return "no-face";
+  if (tf.timestampMs == null || tf.timestampMs <= lastTimestampMs) return "stale";
+  const depth = tf.depthCm ?? 0;
+  if (depth < AUTO_CALIB_DEPTH_CM[0] || depth > AUTO_CALIB_DEPTH_CM[1]) return "depth";
+  if (!isFrontalHeadPose(tf.transformMatrix)) return "not-frontal";
+  const aspect = tf.videoWidth / tf.videoHeight;
+  const measure = measureFacePx(tf.landmarks, outerEyeSpanScene(tf.landmarks, aspect), tf.videoWidth, tf.videoHeight);
+  if (!measure || measure.eyeOpenness < CALIB_MIN_EYE_OPENNESS) return "eyes";
+  return { measure, aspect };
+}
+
 /**
  * Zero-interaction fit-size calibration. A customer will not hold a card or
  * press a button, so this samples the live tracking whenever the frame
@@ -47,17 +82,15 @@ export function useAutoFitCalibration(enabled: boolean) {
     const id = setInterval(() => {
       const state = useTryOnStore.getState();
       const tf = state.trackingFrame;
-      if (!tf || !tf.hasFace || !tf.landmarks || tf.landmarks.length < 478 || !tf.transformMatrix) return;
-      if (tf.timestampMs == null || tf.timestampMs <= lastTs.current) return;
-      const depth = tf.depthCm ?? 0;
-      if (depth < AUTO_CALIB_DEPTH_CM[0] || depth > AUTO_CALIB_DEPTH_CM[1]) return;
-      if (!isFrontalHeadPose(tf.transformMatrix)) return;
-      const aspect = tf.videoWidth / tf.videoHeight;
-      const m = measureFacePx(tf.landmarks, outerEyeSpanScene(tf.landmarks, aspect), tf.videoWidth, tf.videoHeight);
-      if (!m || m.eyeOpenness < CALIB_MIN_EYE_OPENNESS) return;
-      lastTs.current = tf.timestampMs;
+      const verdict = evaluateAutoCalibSample(tf, lastTs.current);
+      if (typeof verdict === "string" || verdict === null) {
+        if (verdict && verdict !== "stale") state.setAutoCalib({ ...state.autoCalib, reject: verdict });
+        return;
+      }
+      const { measure: m, aspect } = verdict;
+      lastTs.current = tf!.timestampMs!;
       measures.current.push(m);
-      samples.current.push({ landmarks: tf.landmarks, transformMatrix: tf.transformMatrix });
+      samples.current.push({ landmarks: tf!.landmarks!, transformMatrix: tf!.transformMatrix! });
       if (measures.current.length > AUTO_CALIB_WINDOW) {
         measures.current.shift();
         samples.current.shift();
@@ -65,7 +98,7 @@ export function useAutoFitCalibration(enabled: boolean) {
       const robust = robustProfileFromMeasures(measures.current, Math.min(AUTO_CALIB_MIN_SAMPLES, 10));
       const n = measures.current.length;
       const sigma = robust?.sigmaMm ?? null;
-      state.setAutoCalib({ n, sigmaMm: sigma, applied: bestSigma.current < Infinity });
+      state.setAutoCalib({ n, sigmaMm: sigma, applied: bestSigma.current < Infinity, reject: null });
       if (!robust || n < AUTO_CALIB_MIN_SAMPLES || robust.sigmaMm > AUTO_CALIB_MAX_SIGMA_MM) return;
       if (robust.sigmaMm >= bestSigma.current * IMPROVE_FACTOR) return;
       bestSigma.current = robust.sigmaMm;
@@ -73,7 +106,7 @@ export function useAutoFitCalibration(enabled: boolean) {
       console.info(
         `[EyeNetra:autocalib] applied faceWidth=${robust.profile.faceWidthMm.toFixed(1)}mm σ=${robust.sigmaMm.toFixed(2)}mm n=${robust.n}`,
       );
-      state.setAutoCalib({ n, sigmaMm: robust.sigmaMm, applied: true });
+      state.setAutoCalib({ n, sigmaMm: robust.sigmaMm, applied: true, reject: null });
     }, SAMPLE_EVERY_MS);
     return () => clearInterval(id);
   }, [enabled]);

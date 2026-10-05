@@ -77,7 +77,11 @@ export function FitCalibration() {
               ? `Measuring your fit size… ${Math.min(autoCalib.n, 40)}/40${
                   autoCalib.sigmaMm != null ? ` · spread ${autoCalib.sigmaMm.toFixed(1)} mm` : ""
                 } — just look at the screen`
-              : "Measuring your fit size — look at the screen, eyes open"}
+              : autoCalib.reject === "not-frontal"
+                ? "Measuring your fit size — please look straight at the screen"
+                : autoCalib.reject === "depth"
+                  ? "Measuring your fit size — come a little closer"
+                  : "Measuring your fit size — look at the screen, eyes open"}
         </span>
       ) : null}
       <button
