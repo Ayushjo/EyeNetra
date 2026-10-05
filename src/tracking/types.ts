@@ -23,6 +23,21 @@ export type TrackingFrame = {
    * useFitEngine fallback) and HQ capture re-pose.
    */
   transformMatrix?: number[] | null;
+  /**
+   * Perspective (anatomical) pose, computed once per detection alongside the
+   * ortho pose above. useFitEngine consumes this in perspective render mode.
+   */
+  anchorPose?: {
+    position: Vec3;
+    rotation: Quat;
+    scale: number;
+  } | null;
+  /** Head distance from camera (cm) from the transform matrix. */
+  depthCm?: number | null;
+  /** Video-frame media time (ms) — filter time base. */
+  timestampMs?: number;
+  /** performance.now() when the detection finished — prediction offset base. */
+  detectedAtMs?: number;
 };
 
 export type TrackingProviderId = "mediapipe" | "jeeliz";

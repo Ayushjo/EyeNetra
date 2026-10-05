@@ -2,6 +2,21 @@ import { create } from "zustand";
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import { FRAMES, getFrameById, type FrameSku, type FrameVariant } from "@/data/frames";
 import type { FaceProfile } from "@/lib/faceProfile";
+import {
+  DEFAULT_CAMERA_CALIB,
+  type CameraCalib,
+} from "@/lib/cameraCalib";
+import {
+  DEFAULT_LIGHT_ESTIMATE,
+  type LightEstimate,
+} from "@/lib/lightEstimate";
+import {
+  canonicalHeadAnchors,
+  DEFAULT_TRAGION_TUNE,
+  type GlassesGeom,
+  type HeadAnchors,
+  type TragionTune,
+} from "@/lib/headAnchors";
 import type { TrackingFrame, TrackingProviderId } from "@/tracking/types";
 
 export type LandmarkPoint = Pick<NormalizedLandmark, "x" | "y" | "z">;
@@ -35,6 +50,10 @@ export type CaptureState = {
   transformMatrix: number[] | null;
   videoWidth: number;
   videoHeight: number;
+  renderMode: RenderMode;
+  fovDeg: number;
+  anchorPose: NonNullable<TrackingFrame["anchorPose"]> | null;
+  faceDepthCm: number | null;
   frameId: string;
   variantId: string;
   refine: CaptureRefine;
@@ -78,6 +97,20 @@ type TryOnState = {
    * Jeeliz size so switch keeps pixel-matched frame width.
    */
   lastMediapipeScale: number | null;
+  /** Anatomical anchor points in head-local metric space (cm). */
+  headAnchors: HeadAnchors;
+  /** Per-GLB scanned bridge/hinge geometry (normalized model units). */
+  glassesGeom: Record<string, GlassesGeom>;
+  /** Dev sliders for the estimated tragion offset (behind showFitDebug). */
+  tragionTune: TragionTune;
+  /** Single source of camera FOV + iris scale correction for all consumers. */
+  cameraCalib: CameraCalib;
+  /** Ambient light estimate from the video feed (EMA-smoothed). */
+  lightEstimate: LightEstimate;
+  /** Banner shown on the stage when the voice assistant puts a frame on the face. */
+  showcase: { name: string; brand: string; at: number } | null;
+  /** Hide dev-only tuning panels (default: hidden — this is a customer screen). */
+  showDevControls: boolean;
 
   selectedFrame: () => FrameSku;
   selectedVariant: () => FrameVariant;
@@ -91,6 +124,13 @@ type TryOnState = {
   setShowFitDebug: (value: boolean) => void;
   setFaceProfile: (profile: FaceProfile | null) => void;
   setLastMediapipeScale: (scale: number | null) => void;
+  setHeadAnchors: (anchors: HeadAnchors) => void;
+  setGlassesGeom: (frameId: string, geom: GlassesGeom) => void;
+  setTragionTune: (tune: Partial<TragionTune>) => void;
+  setCameraCalib: (calib: Partial<CameraCalib>) => void;
+  setLightEstimate: (estimate: LightEstimate) => void;
+  setShowcase: (showcase: { name: string; brand: string } | null) => void;
+  setShowDevControls: (value: boolean) => void;
   setCapture: (capture: CaptureState | null) => void;
   /** Architected refinement nudge for capture (not user-facing yet). */
   setCaptureRefine: (refine: Partial<CaptureRefine>) => void;
@@ -112,7 +152,7 @@ type TryOnState = {
 type TryOnStore = ReturnType<typeof createTryOnStore>;
 
 /** Bump when store shape/actions change so Fast Refresh doesn't keep a stale singleton. */
-const STORE_VERSION = 7;
+const STORE_VERSION = 9;
 
 function createTryOnStore() {
   return create<TryOnState>((set, get) => ({
@@ -133,7 +173,14 @@ function createTryOnStore() {
     trackingFrame: null,
     trackingProviderId: "mediapipe",
     renderMode: "perspective",
-    perspTune: { yOffsetCm: 0.8, zOffsetCm: 0.6, scaleTune: 1.0 },
+    perspTune: { yOffsetCm: 0, zOffsetCm: 0, scaleTune: 1.0 },
+    headAnchors: canonicalHeadAnchors(),
+    glassesGeom: {},
+    tragionTune: { ...DEFAULT_TRAGION_TUNE },
+    cameraCalib: { ...DEFAULT_CAMERA_CALIB },
+    lightEstimate: { ...DEFAULT_LIGHT_ESTIMATE },
+    showcase: null,
+    showDevControls: false,
     debugPoseLog: false,
     showFitDebug: false,
   capture: null,
@@ -189,6 +236,26 @@ function createTryOnStore() {
       set({ faceProfile: profile });
     },
     setLastMediapipeScale: (scale) => set({ lastMediapipeScale: scale }),
+    setHeadAnchors: (anchors) => set({ headAnchors: anchors }),
+    setCameraCalib: (calib) =>
+      set({ cameraCalib: { ...get().cameraCalib, ...calib } }),
+    setLightEstimate: (estimate) => set({ lightEstimate: estimate }),
+    setShowcase: (showcase) =>
+      set({ showcase: showcase ? { ...showcase, at: Date.now() } : null }),
+    setShowDevControls: (value) => set({ showDevControls: value }),
+    setGlassesGeom: (frameId, geom) =>
+      set({ glassesGeom: { ...get().glassesGeom, [frameId]: geom } }),
+    setTragionTune: (tune) => {
+      const merged = { ...get().tragionTune, ...tune };
+      set({
+        tragionTune: merged,
+        // Tune applies only to canonical anchors; calibrated ones are measured.
+        headAnchors:
+          get().headAnchors.source === "canonical"
+            ? canonicalHeadAnchors(merged)
+            : get().headAnchors,
+      });
+    },
     setCapture: (capture) => set({ capture }),
     setCaptureRefine: (refine) => {
       const cap = get().capture;
@@ -208,9 +275,7 @@ function createTryOnStore() {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var __eyenetraTryOnStore: TryOnStore | undefined;
-  // eslint-disable-next-line no-var
   var __eyenetraTryOnStoreVersion: number | undefined;
 }
 

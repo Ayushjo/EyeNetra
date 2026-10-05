@@ -28,11 +28,13 @@ export function useTrackingSession(
     if (!video) return;
 
     let cancelled = false;
+    let lastPublished: object | null = null;
     const publish = () => {
       if (cancelled) return;
       const frame = providerRef.current?.getFrame() ?? null;
-      if (typeof setTrackingFrame === "function") {
+      if (frame !== lastPublished) {
         setTrackingFrame(frame);
+        lastPublished = frame;
       }
       publishRaf.current = requestAnimationFrame(publish);
     };

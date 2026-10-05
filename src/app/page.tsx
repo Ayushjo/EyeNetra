@@ -1,4 +1,5 @@
 import { TryOnStage } from "@/components/TryOnStage";
+import { VoiceAgentPanel } from "@/components/VoiceAgentPanel";
 
 export default function Home() {
   return (
@@ -19,6 +20,8 @@ export default function Home() {
 
         <TryOnStage />
 
+        <VoiceAgentPanel />
+
         <aside className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600">
           <p className="font-medium text-zinc-800">How to test</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5">
@@ -26,7 +29,10 @@ export default function Home() {
             <li>Wait for the face model to load — glasses should lock to your face.</li>
             <li>Turn your head ¾ — temple arms should tuck behind via occlusion.</li>
             <li>Swap frames/colors in the picker; tune smoothing if needed.</li>
-            <li>Use Screenshot to download the composite preview.</li>
+            <li>
+              Talk to the assistant (needs <code className="rounded bg-zinc-100 px-1">voice_agent/bot.py</code> running) —
+              frames it suggests appear on your face while you keep talking.
+            </li>
           </ol>
         </aside>
       </div>

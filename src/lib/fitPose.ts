@@ -2,6 +2,9 @@ import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import { LM } from "@/lib/mediapipe/constants";
 import { landmarkToWorld } from "@/lib/coords";
 import type { FaceProfile } from "@/lib/faceProfile";
+import { decomposeHeadMatrix, type HeadAnchors } from "@/lib/headAnchors";
+import { LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
+import { CANONICAL_CM } from "@/lib/canonicalFace";
 import type { LandmarkPoint } from "@/store/tryOnStore";
 
 export type FitPose = {
@@ -236,9 +239,20 @@ export type PerspectiveInput = {
   transformMatrix: number[] | null;
   aspect: number;
   frameWidthMm: number;
+  /** Nose-pad standoff from the frame front (mm) — pushes off the seat. */
+  nosePadOffsetMm?: number;
   scaleTune: number;
+  /** Residual trims only (default 0) — anatomical seat does the real work. */
   yOffsetCm: number;
   zOffsetCm: number;
+  /** Head-local anatomical anchors; null falls back to the mid-eye ray path. */
+  headAnchors?: HeadAnchors | null;
+  /** Pantoscopic pitch (rad) solved from hinge→tragion geometry. */
+  pantoRad?: number;
+  /** Iris-calibrated relative scale correction (1 = uncalibrated). */
+  scaleCorrection?: number;
+  /** Vertical FOV (deg) — must match the render camera (default: solver 63). */
+  fovDeg?: number;
   modelCorrect?: Quaternion;
   debugLog?: boolean;
 };
@@ -252,14 +266,19 @@ let lastPerspLogMs = 0;
 export function perspectiveHeadDepth(
   transformMatrix: number[] | null,
 ): number | null {
-  if (!transformMatrix || transformMatrix.length < 16) return null;
-  _mp.fromArray(transformMatrix).transpose();
+  if (!decomposeHeadMatrix(transformMatrix, _mp)) return null;
   _mp.decompose(_posP, _quatP, _sclP);
-  if (_posP.lengthSq() < 1e-10) {
-    _mp.fromArray(transformMatrix);
-    _mp.decompose(_posP, _quatP, _sclP);
-  }
   return Math.max(5, Math.abs(_posP.z) || 40);
+}
+
+/** Camera depth of landmark 168, the depth reference for MediaPipe landmark z. */
+export function perspectiveFaceDepth(
+  transformMatrix: number[] | null,
+): number | null {
+  if (!decomposeHeadMatrix(transformMatrix, _mp)) return null;
+  const mid = CANONICAL_CM[LM.MID_EYES];
+  const depth = -_seatWorld.set(mid[0], mid[1], mid[2]).applyMatrix4(_mp).z;
+  return Number.isFinite(depth) && depth > 5 ? depth : null;
 }
 
 /**
@@ -279,61 +298,112 @@ export function perspectiveHeadDepth(
  * MediaPipe matrix data is row-major → transpose for three.js. The webcam feed
  * is CSS-mirrored, so we mirror X (position) and the quaternion's y,z.
  */
+const _seatLocal = new Vector3();
+const _seatWorld = new Vector3();
+const _panto = new Quaternion();
+const _trim = new Vector3();
+
 export function computePosePerspective(input: PerspectiveInput): FitPose | null {
   const {
     landmarks,
     transformMatrix,
     aspect,
     frameWidthMm,
+    nosePadOffsetMm = 0,
     scaleTune,
     yOffsetCm,
     zOffsetCm,
+    headAnchors = null,
+    pantoRad = 0,
+    scaleCorrection = 1,
+    fovDeg = PERSPECTIVE_FOV_DEG,
     modelCorrect = IDENTITY,
     debugLog = false,
   } = input;
 
-  if (!transformMatrix || transformMatrix.length < 16) return null;
-  const mid =
-    landmarks[LM.MID_EYES] ?? landmarks[LM.NOSE_BRIDGE];
+  if (!decomposeHeadMatrix(transformMatrix, _mp)) return null;
+  const mid = landmarks[LM.MID_EYES] ?? landmarks[LM.NOSE_BRIDGE];
   const leftIris = landmarks[LM.LEFT_IRIS];
   const rightIris = landmarks[LM.RIGHT_IRIS];
   if (!mid || !leftIris || !rightIris) return null;
 
-  // Row-major → column-major, then decompose. Translation = head position (cm).
-  _mp.fromArray(transformMatrix).transpose();
   _mp.decompose(_posP, _quatP, _sclP);
-  if (_posP.lengthSq() < 1e-10) {
-    // Fallback: some builds already deliver column-major.
-    _mp.fromArray(transformMatrix);
-    _mp.decompose(_posP, _quatP, _sclP);
-  }
 
   // Depth: distance of the head from the camera (cm), always positive.
   const depth = Math.max(5, Math.abs(_posP.z) || 40);
 
-  // Rotation: head orientation, corrected for the GLB's authored facing, then
-  // mirrored for the flipped video.
+  const halfFov = (fovDeg * Math.PI) / 180 / 2;
+  const tanHalf = Math.tan(halfFov);
+
+  let position: Vector3;
+  if (headAnchors) {
+    // Anatomical path.
+    //  DEPTH: the head-space sellion mapped through the head matrix. The
+    //  matrix is a least-squares fit of the canonical face to the observed
+    //  landmarks, so its depth is reliable while its XY carries the generic
+    //  face's shape residual.
+    //  XY: the ray through the OBSERVED sellion (lerp of landmarks 168→6,
+    //  the same proportion the canonical seat uses). This is authoritative:
+    //  it is the user's actual nose bridge in this frame, tracked in every
+    //  pose, so the frame stays pixel-locked under yaw/pitch/distance. A
+    //  calibrated seatHeadCm was measured from these same landmarks, so its
+    //  XY is not re-applied (that would double count).
+    //  OFFSETS: intentional 3D displacements (nose-pad standoff, per-user
+    //  seatOffsetHeadCm) are rotated by the head pose and added in full.
+    _seatWorld.copy(headAnchors.seatHeadCm).applyMatrix4(_mp);
+    // Degenerate (rotation-only) matrices leave the seat near the camera
+    // plane — fall back to the head depth rather than clamping to nonsense.
+    const rawSeatDepth = -_seatWorld.z;
+    const seatDepth = rawSeatDepth > depth * 0.5 ? rawSeatDepth : depth;
+
+    // Observed pupil line: midpoint of the two iris centres (the most
+    // precisely tracked landmarks). The glasses pivot is the lens centre, so
+    // the lens-centre-below-pupil drop is applied as a head-local offset.
+    const seatLmX = (leftIris.x + rightIris.x) / 2;
+    const seatLmY = (leftIris.y + rightIris.y) / 2;
+    position = new Vector3(
+      (0.5 - seatLmX) * 2 * seatDepth * tanHalf * aspect, // mirrored
+      (0.5 - seatLmY) * 2 * seatDepth * tanHalf,
+      -seatDepth,
+    );
+
+    // Head-local offset → camera space via the (unmirrored) head rotation,
+    // then mirror X to match the mirrored video.
+    _seatLocal.set(0, -LENS_CENTER_BELOW_PUPIL_CM, nosePadOffsetMm / 10);
+    if (headAnchors.seatOffsetHeadCm) _seatLocal.add(headAnchors.seatOffsetHeadCm);
+    if (_seatLocal.lengthSq() > 0) {
+      _seatLocal.applyQuaternion(_quatP);
+      position.x -= _seatLocal.x;
+      position.y += _seatLocal.y;
+      position.z += _seatLocal.z;
+    }
+  } else {
+    // Legacy fallback: ray through the mid-eye landmark at head depth.
+    const worldX = (0.5 - mid.x) * 2 * depth * tanHalf * aspect;
+    const worldY = (0.5 - mid.y) * 2 * depth * tanHalf;
+    position = new Vector3(worldX, worldY, -depth);
+  }
+
+  // Rotation: head orientation × pantoscopic pitch, corrected for the GLB's
+  // authored facing, then mirrored for the flipped video.
+  if (pantoRad !== 0) {
+    _panto.setFromAxisAngle(_trim.set(1, 0, 0), pantoRad);
+    _quatP.multiply(_panto);
+  }
   _quatP.multiply(modelCorrect);
   _quatP.set(_quatP.x, -_quatP.y, -_quatP.z, _quatP.w).normalize();
 
-  // XY: cast a ray through the mid-eye landmark to `depth`. Mirror X for video.
-  const halfFov = (PERSPECTIVE_FOV_DEG * Math.PI) / 180 / 2;
-  const tanHalf = Math.tan(halfFov);
-  const ndcX = (0.5 - mid.x) * 2; // mirrored
-  const ndcY = (0.5 - mid.y) * 2;
-  const worldX = ndcX * depth * tanHalf * aspect;
-  const worldY = ndcY * depth * tanHalf;
+  // Residual trims (default 0) along the head's own down/forward.
+  if (yOffsetCm !== 0 || zOffsetCm !== 0) {
+    const down = new Vector3(0, -1, 0).applyQuaternion(_quatP);
+    const fwd = new Vector3(0, 0, 1).applyQuaternion(_quatP);
+    position.addScaledVector(down, yOffsetCm);
+    position.addScaledVector(fwd, zOffsetCm);
+  }
 
-  const position = new Vector3(worldX, worldY, -depth);
-  // Nudge along the head's own down/forward so the frame sits on the nose
-  // bridge, not the pupils (yOffsetCm down, zOffsetCm toward camera).
-  const down = new Vector3(0, -1, 0).applyQuaternion(_quatP);
-  const fwd = new Vector3(0, 0, 1).applyQuaternion(_quatP);
-  position.addScaledVector(down, yOffsetCm);
-  position.addScaledVector(fwd, zOffsetCm);
-
-  // True physical width: model is normalized to width 1 → frameWidthMm in cm.
-  const scale = (frameWidthMm / 10) * scaleTune;
+  // True physical width: model is normalized to width 1 → frameWidthMm in cm,
+  // corrected by the iris-calibrated relative scale when available.
+  const scale = (frameWidthMm / 10) * scaleCorrection * scaleTune;
 
   if (debugLog) {
     const now = performance.now();
@@ -341,7 +411,7 @@ export function computePosePerspective(input: PerspectiveInput): FitPose | null 
       lastPerspLogMs = now;
       _euler.setFromQuaternion(_quatP, "YXZ");
       console.info(
-        `[EyeNetra:persp] depth=${depth.toFixed(1)}cm pos=(${worldX.toFixed(1)},${worldY.toFixed(1)},${(-depth).toFixed(1)}) yaw=${((_euler.y * 180) / Math.PI).toFixed(1)} pitch=${((_euler.x * 180) / Math.PI).toFixed(1)} scale=${scale.toFixed(1)}`,
+        `[EyeNetra:persp] depth=${depth.toFixed(1)}cm pos=(${position.x.toFixed(1)},${position.y.toFixed(1)},${position.z.toFixed(1)}) yaw=${((_euler.y * 180) / Math.PI).toFixed(1)} pitch=${((_euler.x * 180) / Math.PI).toFixed(1)} scale=${scale.toFixed(1)} panto=${((pantoRad * 180) / Math.PI).toFixed(1)}°`,
       );
     }
   }

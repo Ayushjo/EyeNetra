@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FramePicker } from "@/components/FramePicker";
 import { LandmarkOverlay } from "@/components/LandmarkOverlay";
 import { TryOnControls } from "@/components/TryOnControls";
@@ -11,6 +11,7 @@ import {
 } from "@/components/CaptureStudio";
 import { WebcamFeed } from "@/components/WebcamFeed";
 import { useTrackingSession } from "@/hooks/useTrackingSession";
+import { useLightEstimate } from "@/hooks/useLightEstimate";
 import { useWebcam } from "@/hooks/useWebcam";
 import { detectCapabilities } from "@/lib/capabilities";
 import { useTryOnStore } from "@/store/tryOnStore";
@@ -48,6 +49,31 @@ function StatusPanel({
   );
 }
 
+/** "Showing: <frame>" toast on the stage when the assistant changes the frame. */
+function ShowcaseBanner() {
+  const showcase = useTryOnStore((s) => s.showcase);
+  const frame = useTryOnStore((s) => s.selectedFrame());
+  const variant = useTryOnStore((s) => s.selectedVariant());
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!showcase) return;
+    setVisible(true);
+    const id = setTimeout(() => setVisible(false), 7000);
+    return () => clearTimeout(id);
+  }, [showcase]);
+  if (!showcase || !visible) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center">
+      <div className="rounded-xl bg-black/70 px-4 py-2 text-center text-white shadow-lg backdrop-blur">
+        <p className="text-sm font-medium">Showing: {showcase.name}</p>
+        <p className="text-[11px] text-zinc-300">
+          {showcase.brand} · rendered as {frame.name} ({variant.name})
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function TryOnStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const { status, errorMessage, videoRef, start } = useWebcam();
@@ -66,7 +92,23 @@ export function TryOnStage() {
     setMobilePerfMode(caps.preferMobilePerf);
   }, [setCapabilities, setMobilePerfMode]);
 
+  // Apply ?frame=&variant= deep links — the /voice page navigates here with
+  // these params when the agent pushes a try_on_frame suggestion. Reads
+  // window.location directly instead of useSearchParams so the page needs
+  // no Suspense boundary.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const frameId = params.get("frame");
+    const variantId = params.get("variant");
+    if (!frameId && !variantId) return;
+    // setFrame before setVariant — setFrame resets the variant to default.
+    if (frameId) useTryOnStore.getState().setFrame(frameId);
+    if (variantId) useTryOnStore.getState().setVariant(variantId);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
   useTrackingSession(videoRef, status === "ready");
+  useLightEstimate(videoRef, status === "ready");
 
   const webglBlocked = capabilities && !capabilities.webgl2;
   // Match stage to camera aspect so landmarks ↔ pixels stay 1:1 (no cover crop).
@@ -77,10 +119,12 @@ export function TryOnStage() {
     <div className="space-y-4">
       <CaptureStudio />
       <div
+        id="tryon-stage"
         ref={stageRef}
         className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-zinc-900 shadow-xl ring-1 ring-zinc-200"
         style={{ aspectRatio: `${stageAspect}` }}
       >
+        <ShowcaseBanner />
         {/* Always mounted so getUserMedia can attach before ready UI. */}
         <WebcamFeed
           videoRef={videoRef}

@@ -5,12 +5,19 @@ import { Canvas } from "@react-three/fiber";
 import { Suspense, useMemo } from "react";
 import {
   ACESFilmicToneMapping,
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
+  Matrix4,
   Quaternion,
   SRGBColorSpace,
+  Vector3,
 } from "three";
 import { GlassesModel } from "@/components/GlassesModel";
 import { getFrameById } from "@/data/frames";
 import { computePose } from "@/lib/fitPose";
+import { FACE_TRIANGLES } from "@/lib/faceMesh";
+import { writeFaceSurface } from "@/lib/faceOcclusion";
 import { useTryOnStore, type CaptureState } from "@/store/tryOnStore";
 
 const IDENTITY = new Quaternion();
@@ -54,6 +61,14 @@ function CaptureGlasses({ capture }: { capture: CaptureState }) {
   const faceProfile = useTryOnStore((s) => s.faceProfile);
 
   const pose = useMemo(() => {
+    if (capture.renderMode === "perspective" && capture.anchorPose) {
+      const a = capture.anchorPose;
+      return {
+        position: new Vector3(a.position.x + capture.refine.dx, a.position.y + capture.refine.dy, a.position.z),
+        quaternion: new Quaternion(a.rotation.x, a.rotation.y, a.rotation.z, a.rotation.w),
+        scale: a.scale * (1 + capture.refine.dScale),
+      };
+    }
     const p = computePose({
       landmarks: capture.landmarks,
       transformMatrix: capture.transformMatrix,
@@ -77,11 +92,10 @@ function CaptureGlasses({ capture }: { capture: CaptureState }) {
 
   return (
     <>
-      <CaptureShadowDisc
-        x={pose.position.x}
-        y={pose.position.y}
-        scale={pose.scale}
-      />
+      {capture.renderMode === "ortho" && <CaptureShadowDisc
+        x={pose.position.x} y={pose.position.y} scale={pose.scale}
+      />}
+      {capture.renderMode === "perspective" && <CaptureFaceMask capture={capture} />}
       <group
         position={pose.position}
         quaternion={pose.quaternion}
@@ -98,6 +112,36 @@ function CaptureGlasses({ capture }: { capture: CaptureState }) {
       </group>
     </>
   );
+}
+
+/** Static depth-only mask from the exact frozen detection and perspective camera. */
+function CaptureFaceMask({ capture }: { capture: CaptureState }) {
+  const geometry = useMemo(() => {
+    if (!capture.anchorPose || !capture.faceDepthCm) return null;
+    const a = capture.anchorPose;
+    const raw = new Matrix4().compose(
+      new Vector3(a.position.x, a.position.y, a.position.z),
+      new Quaternion(a.rotation.x, a.rotation.y, a.rotation.z, a.rotation.w),
+      new Vector3(a.scale, a.scale, a.scale),
+    );
+    const positions = new Float32Array(468 * 3);
+    const aspect = capture.videoWidth / capture.videoHeight;
+    const tanHalf = Math.tan(capture.fovDeg * Math.PI / 360);
+    if (!writeFaceSurface(capture.landmarks, capture.faceDepthCm, aspect, raw.invert(), positions, new Vector3(), tanHalf)) return null;
+    const geom = new BufferGeometry();
+    geom.setAttribute("position", new BufferAttribute(positions, 3));
+    geom.setIndex(FACE_TRIANGLES);
+    return geom;
+  }, [capture]);
+  if (!geometry || !capture.anchorPose) return null;
+  const a = capture.anchorPose;
+  return <group position={[a.position.x, a.position.y, a.position.z]}
+    quaternion={[a.rotation.x, a.rotation.y, a.rotation.z, a.rotation.w]}
+    scale={a.scale}>
+    <mesh geometry={geometry} renderOrder={0} frustumCulled={false}>
+      <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
+    </mesh>
+  </group>;
 }
 
 /**
@@ -130,9 +174,14 @@ export function CaptureStudio() {
           />
           <div className="absolute inset-0">
             <Canvas
-              orthographic
+              orthographic={capture.renderMode === "ortho"}
               dpr={[1, 2]}
-              camera={{
+              camera={capture.renderMode === "perspective" ? {
+                position: [0, 0, 0],
+                fov: capture.fovDeg,
+                near: 1,
+                far: 1000,
+              } : {
                 position: [0, 0, 5],
                 zoom: 1,
                 near: -50,
@@ -195,6 +244,9 @@ export function freezeCaptureFromStage(
     selectedFrameId,
     selectedVariantId,
     hasFace,
+    renderMode,
+    cameraCalib,
+    trackingFrame,
   } = useTryOnStore.getState();
 
   if (!hasFace || !landmarks) return null;
@@ -217,6 +269,16 @@ export function freezeCaptureFromStage(
     transformMatrix: transformMatrix ? [...transformMatrix] : null,
     videoWidth: w,
     videoHeight: h,
+    renderMode,
+    fovDeg: cameraCalib.fovDeg,
+    anchorPose: trackingFrame?.anchorPose
+      ? {
+          position: { ...trackingFrame.anchorPose.position },
+          rotation: { ...trackingFrame.anchorPose.rotation },
+          scale: trackingFrame.anchorPose.scale,
+        }
+      : null,
+    faceDepthCm: trackingFrame?.depthCm ?? null,
     frameId: selectedFrameId,
     variantId: selectedVariantId,
     refine: { dx: 0, dy: 0, dScale: 0 },

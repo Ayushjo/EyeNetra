@@ -41,9 +41,9 @@ export const CALIB_MIN_KEPT = 10;
 export const CALIB_TARGET_FRAMES = 28;
 export const CALIB_DURATION_MS = 1500;
 
-function dist2(a: LandmarkPoint, b: LandmarkPoint): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
+function dist2(a: LandmarkPoint, b: LandmarkPoint, width: number, height: number): number {
+  const dx = (a.x - b.x) * width;
+  const dy = (a.y - b.y) * height;
   return Math.hypot(dx, dy);
 }
 
@@ -52,11 +52,14 @@ function writeLog(action: string, detail: unknown) {
   console.info(`[EyeNetra:calib:write] ${action}`, detail, `\n  via ${stack}`);
 }
 
-/** Per-frame measures in normalized landmark space + scene span. */
+/** Per-frame measures in actual image pixels; x/y landmarks use different axes. */
 export function measureFacePx(
   landmarks: LandmarkPoint[],
   eyeSpanScene: number,
+  videoWidth: number,
+  videoHeight: number,
 ): FaceMeasurePx | null {
+  if (!(videoWidth > 0) || !(videoHeight > 0)) return null;
   const lOuter = landmarks[LM.LEFT_IRIS_OUTER];
   const lInner = landmarks[LM.LEFT_IRIS_INNER];
   const rOuter = landmarks[LM.RIGHT_IRIS_OUTER];
@@ -92,15 +95,15 @@ export function measureFacePx(
     return null;
   }
 
-  const leftIrisDiam = dist2(lOuter, lInner);
-  const rightIrisDiam = dist2(rOuter, rInner);
+  const leftIrisDiam = dist2(lOuter, lInner, videoWidth, videoHeight);
+  const rightIrisDiam = dist2(rOuter, rInner, videoWidth, videoHeight);
   const irisDiamPx = (leftIrisDiam + rightIrisDiam) / 2;
   if (irisDiamPx < 1e-6) return null;
 
   return {
     irisDiamPx,
-    ipdPx: dist2(lIris, rIris),
-    faceWidthPx: dist2(leftCanthus, rightCanthus),
+    ipdPx: dist2(lIris, rIris, videoWidth, videoHeight),
+    faceWidthPx: dist2(leftCanthus, rightCanthus, videoWidth, videoHeight),
     midEyeX: mid.x,
     midEyeY: mid.y,
     eyeSpanScene,
@@ -122,29 +125,39 @@ export function pxToMm(measure: FaceMeasurePx): {
  * Keep frames where mid-eye motion vs previous kept is below threshold.
  * Returns averaged profile or null if too few kept samples.
  */
+export function stableMeasureIndices(
+  measures: FaceMeasurePx[],
+  motionThreshold = CALIB_MOTION_THRESHOLD,
+): number[] {
+  const kept: number[] = [];
+  for (let i = 0; i < measures.length; i++) {
+    const m = measures[i];
+    if (kept.length === 0) {
+      kept.push(i);
+      continue;
+    }
+    const prev = measures[kept[kept.length - 1]];
+    const motion = Math.hypot(m.midEyeX - prev.midEyeX, m.midEyeY - prev.midEyeY);
+    if (motion > motionThreshold) continue;
+    kept.push(i);
+  }
+  return kept;
+}
+
 export function buildProfileFromMeasures(
   measures: FaceMeasurePx[],
   motionThreshold = CALIB_MOTION_THRESHOLD,
   minKept = CALIB_MIN_KEPT,
 ): FaceProfile | null {
-  const kept: FaceMeasurePx[] = [];
-  for (const m of measures) {
-    if (kept.length === 0) {
-      kept.push(m);
-      continue;
-    }
-    const prev = kept[kept.length - 1];
-    const motion = Math.hypot(m.midEyeX - prev.midEyeX, m.midEyeY - prev.midEyeY);
-    if (motion > motionThreshold) continue;
-    kept.push(m);
-  }
+  const kept = stableMeasureIndices(measures, motionThreshold);
 
   if (kept.length < minKept) return null;
 
   let ipdSum = 0;
   let faceSum = 0;
   let spanSum = 0;
-  for (const m of kept) {
+  for (const i of kept) {
+    const m = measures[i];
     const mm = pxToMm(m);
     ipdSum += mm.ipdMm;
     faceSum += mm.faceWidthMm;

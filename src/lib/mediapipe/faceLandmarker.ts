@@ -7,6 +7,23 @@ import { FACE_LANDMARKER_MODEL_URL, WASM_BASE_PATH } from "./constants";
 
 let landmarkerPromise: Promise<FaceLandmarker> | null = null;
 
+// MediaPipe's WASM prints its TFLite/XNNPACK init notes through console.error
+// asynchronously (outside any detect() call), which Next's dev overlay counts
+// as an application error. Drop just those known info lines, once, globally.
+const MEDIAPIPE_NOISE = /Created TensorFlow Lite|XNNPACK|^INFO:|^W0000|inference_feedback_manager/;
+let consoleFiltered = false;
+function filterMediapipeConsoleNoise() {
+  if (consoleFiltered || typeof console === "undefined") return;
+  consoleFiltered = true;
+  for (const level of ["error", "warn"] as const) {
+    const original = console[level];
+    console[level] = (...args: unknown[]) => {
+      if (args.length === 1 && typeof args[0] === "string" && MEDIAPIPE_NOISE.test(args[0])) return;
+      original.apply(console, args as Parameters<typeof original>);
+    };
+  }
+}
+
 /**
  * Lazily create a singleton FaceLandmarker in VIDEO mode.
  *
@@ -17,6 +34,7 @@ let landmarkerPromise: Promise<FaceLandmarker> | null = null;
  */
 export function getFaceLandmarker(): Promise<FaceLandmarker> {
   if (!landmarkerPromise) {
+    filterMediapipeConsoleNoise();
     landmarkerPromise = (async () => {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE_PATH);
       return FaceLandmarker.createFromOptions(vision, {

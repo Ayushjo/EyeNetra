@@ -3,8 +3,9 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import { Quaternion, Vector3, type Object3D } from "three";
-import { computePose, computePosePerspective } from "@/lib/fitPose";
-import { OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
+import { computePose } from "@/lib/fitPose";
+import { OneEuroQuat, OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
+import { predictPose, PREDICT_MAX_MS } from "@/lib/posePredict";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type { FitPose } from "@/lib/fitPose";
@@ -38,11 +39,19 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
 
   // One-euro filters: adaptive smoothing (still = smooth, moving = responsive).
   const posFilter = useRef(new OneEuroVec(3, 1.4, 0.03));
-  const quatFilter = useRef(new OneEuroVec(4, 2.0, 0.04));
+  const quatFilter = useRef(new OneEuroQuat(2.0, 0.6));
   const scaleFilter = useRef(new OneEuroScalar(1.0, 0.01));
   const posBuf = useRef<number[]>([0, 0, 0]);
   const quatBuf = useRef<number[]>([0, 0, 0, 1]);
-  const prevQuat = useRef(new Quaternion());
+  // Last two RAW samples (video timestamps) for constant-velocity prediction.
+  const rawPos0 = useRef(new Vector3());
+  const rawQuat0 = useRef(new Quaternion());
+  const rawT0 = useRef(0);
+  const rawPos1 = useRef(new Vector3());
+  const rawQuat1 = useRef(new Quaternion());
+  const rawT1 = useRef(0);
+  const lastSampleT = useRef<number | null>(null);
+  const lastDetectedAt = useRef(0);
   const lastFrameId = useRef<string | null>(null);
   const lastProvider = useRef<string | null>(null);
   const lastFaceSeenAt = useRef(0);
@@ -73,7 +82,6 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       faceProfile,
       trackingProviderId,
       renderMode,
-      perspTune,
     } = state;
 
     const providerKey = trackingProviderId ?? "mediapipe";
@@ -90,6 +98,7 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       posFilter.current.reset();
       quatFilter.current.reset();
       scaleFilter.current.reset();
+      lastSampleT.current = null;
     }
 
     const nowMs = performance.now();
@@ -102,39 +111,15 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     let faceOk = false;
 
     if (providerKey === "mediapipe" && renderMode === "perspective") {
-      // Metric perspective path — computed here so the render-mode toggle is
-      // instant (no provider restart). Uses store landmarks + matrix.
-      if (hasFace && landmarks && landmarks.length >= 468 && transformMatrix) {
-        const sku = state.selectedFrame();
-        const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-        // Per-frame baked offsets + dev-slider delta (sliders default to the
-        // same base so an untouched slider is a no-op).
-        const baseY = sku.fit.perspYOffsetCm ?? 0.8;
-        const baseZ = sku.fit.perspZOffsetCm ?? 0.6;
-        const baseScale = sku.fit.perspScaleTune ?? 1.0;
-        const pose = computePosePerspective({
-          landmarks,
-          transformMatrix,
-          aspect,
-          frameWidthMm: sku.fit.frameWidthMm,
-          scaleTune: baseScale * perspTune.scaleTune,
-          yOffsetCm: baseY + (perspTune.yOffsetCm - 0.8),
-          zOffsetCm: baseZ + (perspTune.zOffsetCm - 0.6),
-          debugLog: debugPoseLog,
-        });
-        if (pose) {
-          faceOk = true;
-          pos = { x: pose.position.x, y: pose.position.y, z: pose.position.z };
-          rot = {
-            x: pose.quaternion.x,
-            y: pose.quaternion.y,
-            z: pose.quaternion.z,
-            w: pose.quaternion.w,
-          };
-          scale = pose.scale;
-          liveScale = pose.liveScale;
-          calibScale = pose.calibScale;
-        }
+      // Metric perspective path — the provider computes the anatomical pose
+      // once per detection (buildTrackingFrame); we only filter it here.
+      if (trackingFrame?.anchorPose) {
+        faceOk = true;
+        pos = trackingFrame.anchorPose.position;
+        rot = trackingFrame.anchorPose.rotation;
+        scale = trackingFrame.anchorPose.scale;
+        liveScale = trackingFrame.anchorPose.scale;
+        calibScale = null;
       }
     } else if (providerKey === "mediapipe") {
       // Prefer provider frame — avoids hide when store recompute races / fails.
@@ -238,12 +223,18 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     // smoothingFactor slider (0.05..1) modulates one-euro responsiveness:
     // higher = snappier (tracks fast motion), lower = glassier (max de-jitter).
     const resp = Math.min(1, Math.max(0.05, smoothingFactor));
-    const t = nowMs / 1000;
+    // Filter on the VIDEO timestamp when the provider supplies it — filtering
+    // with render time re-ingests the same 30 fps sample at 60 fps, biasing
+    // the derivative toward 0 (hidden lag).
+    const sampleTMs = trackingFrame?.timestampMs ?? nowMs;
+    const t = sampleTMs / 1000;
+    const isNewSample = lastSampleT.current !== sampleTMs;
     // Map slider → one-euro min cutoff + beta. resp 0.05→glassy, 1→snappy.
     const posMin = 0.6 + resp * 2.4;
     const posBeta = 0.01 + resp * 0.05;
     posFilter.current.setParams(posMin, posBeta);
-    quatFilter.current.setParams(posMin * 1.3, posBeta * 1.3);
+    // Quat cutoff in the same family; beta scales with angular speed (rad/s).
+    quatFilter.current.setParams(posMin * 1.3, 0.3 + resp * 0.6);
     // Scale must chase distance changes fast — a laggy scale reads as "frame
     // too big when I move back" (face shrinks instantly, frame catches up
     // slowly). High beta = snaps during motion, still smooth at rest.
@@ -256,9 +247,25 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       smoothPos.current.set(pos.x, pos.y, pos.z);
       smoothQuat.current.set(rot.x, rot.y, rot.z, rot.w).normalize();
       smoothScale.current = scale;
-      prevQuat.current.copy(smoothQuat.current);
+      rawPos1.current.copy(smoothPos.current);
+      rawQuat1.current.copy(smoothQuat.current);
+      rawT1.current = sampleTMs;
+      rawT0.current = 0;
+      lastSampleT.current = sampleTMs;
+      lastDetectedAt.current = trackingFrame?.detectedAtMs ?? nowMs;
       initialized.current = true;
-    } else {
+    } else if (isNewSample) {
+      lastSampleT.current = sampleTMs;
+      lastDetectedAt.current = trackingFrame?.detectedAtMs ?? nowMs;
+
+      // Shift the raw-sample window for prediction.
+      rawPos0.current.copy(rawPos1.current);
+      rawQuat0.current.copy(rawQuat1.current);
+      rawT0.current = rawT1.current;
+      rawPos1.current.set(pos.x, pos.y, pos.z);
+      rawQuat1.current.set(rot.x, rot.y, rot.z, rot.w).normalize();
+      rawT1.current = sampleTMs;
+
       const pb = posFilter.current.filter(
         t,
         [pos.x, pos.y, pos.z],
@@ -266,33 +273,38 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
       );
       smoothPos.current.set(pb[0], pb[1], pb[2]);
 
-      // Keep quaternion on the same hemisphere as the last output before
-      // component-wise filtering, else sign flips cause a visible snap.
-      let qx = rot.x;
-      let qy = rot.y;
-      let qz = rot.z;
-      let qw = rot.w;
-      if (
-        prevQuat.current.x * qx +
-          prevQuat.current.y * qy +
-          prevQuat.current.z * qz +
-          prevQuat.current.w * qw <
-        0
-      ) {
-        qx = -qx;
-        qy = -qy;
-        qz = -qz;
-        qw = -qw;
-      }
-      const qb = quatFilter.current.filter(t, [qx, qy, qz, qw], quatBuf.current);
-      smoothQuat.current.set(qb[0], qb[1], qb[2], qb[3]).normalize();
-      prevQuat.current.copy(smoothQuat.current);
+      const qb = quatFilter.current.filter(
+        t,
+        [rot.x, rot.y, rot.z, rot.w],
+        quatBuf.current,
+      );
+      smoothQuat.current.set(qb[0], qb[1], qb[2], qb[3]);
 
       smoothScale.current = scaleFilter.current.filter(t, scale);
     }
+    // Same sample as last render frame → no filter ingestion; prediction
+    // below carries the pose between detections.
 
     target.position.copy(smoothPos.current);
     target.quaternion.copy(smoothQuat.current);
+    // Post-filter constant-velocity prediction hides pipeline latency.
+    // Scaled down as the smoothing slider goes glassy.
+    if (rawT0.current > 0) {
+      const predictMs =
+        Math.min(PREDICT_MAX_MS, Math.max(0, nowMs - lastDetectedAt.current)) *
+        resp;
+      predictPose(
+        rawPos0.current,
+        rawQuat0.current,
+        rawT0.current,
+        rawPos1.current,
+        rawQuat1.current,
+        rawT1.current,
+        predictMs,
+        target.position,
+        target.quaternion,
+      );
+    }
     target.scale.setScalar(smoothScale.current);
 
     if (providerKey === "mediapipe") {

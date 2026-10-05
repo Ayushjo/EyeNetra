@@ -40,6 +40,11 @@ export type FrameSku = {
     perspYOffsetCm?: number;
     perspZOffsetCm?: number;
     perspScaleTune?: number;
+    /**
+     * Manual nose-pad contact point (normalized width-1 model units) when the
+     * automatic bridge scan misreads an odd GLB.
+     */
+    bridgeLocalOverride?: [number, number, number];
   };
   variants: FrameVariant[];
 };
@@ -61,7 +66,7 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.35,
       yOffsetFrac: 0.055,
-      perspYOffsetCm: 0.8,
+      perspYOffsetCm: 0,
       perspScaleTune: 1.0,
     },
     variants: [
@@ -108,7 +113,7 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.3,
       yOffsetFrac: 0.055,
-      perspYOffsetCm: 0.8,
+      perspYOffsetCm: 0,
       perspScaleTune: 1.0,
     },
     variants: [
@@ -156,7 +161,7 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.4,
       yOffsetFrac: 0.05,
-      perspYOffsetCm: 0.8,
+      perspYOffsetCm: 0,
       perspScaleTune: 1.0,
     },
     variants: [
@@ -203,7 +208,7 @@ export const FRAMES: FrameSku[] = [
       modelEuler: [0, 0, 0],
       scaleMul: 1.32,
       yOffsetFrac: 0.055,
-      perspYOffsetCm: 0.6,
+      perspYOffsetCm: 0,
       perspScaleTune: 1.0,
     },
     variants: [
@@ -224,6 +229,378 @@ export const FRAMES: FrameSku[] = [
         lensOpacity: 0.18,
         metalness: 0.08,
         roughness: 0.42,
+      },
+    ],
+  },
+  {
+    id: "p-round-s",
+    name: "Param Round S",
+    glbPath: "/models/param/p-round-s.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 44×44 mm, round.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 122,
+      templeLengthMm: 140,
+      bridgeWidthMm: 21,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-round-s-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-round-l",
+    name: "Param Round L",
+    glbPath: "/models/param/p-round-l.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 50×48 mm, round.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 136,
+      templeLengthMm: 145,
+      bridgeWidthMm: 22,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-round-l-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-rect-s",
+    name: "Param Rect S",
+    glbPath: "/models/param/p-rect-s.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 50×32 mm, rect.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 130,
+      templeLengthMm: 140,
+      bridgeWidthMm: 18,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-rect-s-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-rect-l",
+    name: "Param Rect L",
+    glbPath: "/models/param/p-rect-l.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 56×38 mm, rect.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 142,
+      templeLengthMm: 145,
+      bridgeWidthMm: 17,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-rect-l-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-square",
+    name: "Param Square",
+    glbPath: "/models/param/p-square.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 52×44 mm, square.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 138,
+      templeLengthMm: 145,
+      bridgeWidthMm: 20,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-square-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-wayfarer",
+    name: "Param Wayfarer",
+    glbPath: "/models/param/p-wayfarer.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 52×42 mm, wayfarer.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 139,
+      templeLengthMm: 145,
+      bridgeWidthMm: 20,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-wayfarer-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-aviator",
+    name: "Param Aviator",
+    glbPath: "/models/param/p-aviator.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 58×50 mm, aviator.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 140.4,
+      templeLengthMm: 140,
+      bridgeWidthMm: 14,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-aviator-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-cateye",
+    name: "Param Cat-Eye",
+    glbPath: "/models/param/p-cateye.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 52×40 mm, cateye.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 136,
+      templeLengthMm: 140,
+      bridgeWidthMm: 18,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-cateye-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-oval",
+    name: "Param Oval",
+    glbPath: "/models/param/p-oval.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 50×36 mm, oval.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 131,
+      templeLengthMm: 142,
+      bridgeWidthMm: 19,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-oval-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-shield",
+    name: "Param Shield",
+    glbPath: "/models/param/p-shield.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 62×44 mm, shield.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 148,
+      templeLengthMm: 130,
+      bridgeWidthMm: 12,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-shield-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-narrow",
+    name: "Param Narrow",
+    glbPath: "/models/param/p-narrow.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 46×28 mm, rect.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 124,
+      templeLengthMm: 138,
+      bridgeWidthMm: 20,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-narrow-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
+      },
+    ],
+  },
+  {
+    id: "p-oversize",
+    name: "Param Oversize",
+    glbPath: "/models/param/p-oversize.glb",
+    thumbnailColor: "#2a2a2a",
+    // Parametric measurement rig (scripts/generate-param-frames.mjs):
+    // exact dims, not a product. Lens 58×50 mm, square.
+    fit: {
+      lensMaterialNames: ["Lens"],
+      frameWidthMm: 148,
+      templeLengthMm: 150,
+      bridgeWidthMm: 16,
+      nosePadOffsetMm: 2,
+      modelEuler: [0, 0, 0],
+      scaleMul: 1.3,
+      yOffsetFrac: 0.055,
+      perspYOffsetCm: 0,
+      perspScaleTune: 1.0,
+    },
+    variants: [
+      {
+        id: "p-oversize-black",
+        name: "Matte Black",
+        frameColor: "#1c1c1c",
+        lensColor: "#8a96a3",
+        lensOpacity: 0.3,
+        metalness: 0.1,
+        roughness: 0.5,
       },
     ],
   },

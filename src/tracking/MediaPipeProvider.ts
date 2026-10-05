@@ -1,11 +1,13 @@
 import { getFaceLandmarker } from "@/lib/mediapipe/faceLandmarker";
-import { computePose } from "@/lib/fitPose";
+import { buildTrackingFrame } from "@/tracking/buildTrackingFrame";
 import { useTryOnStore } from "@/store/tryOnStore";
 import type { TrackingFrame, TrackingProvider } from "@/tracking/types";
 
+type VideoFrameMetadata = { mediaTime: number };
+
 type VideoWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback: (
-    cb: (now: number) => void,
+    cb: (now: number, metadata?: VideoFrameMetadata) => void,
   ) => number;
   cancelVideoFrameCallback: (handle: number) => void;
 };
@@ -89,7 +91,7 @@ export class MediaPipeProvider implements TrackingProvider {
       if (this.cancelled) return;
       this.onStatus?.("ready");
 
-      const tick = (now: number) => {
+      const tick = (now: number, metadata?: VideoFrameMetadata) => {
         if (this.cancelled || !this.video) return;
         const v = this.video;
         if (v.readyState < 2) {
@@ -119,70 +121,25 @@ export class MediaPipeProvider implements TrackingProvider {
           const videoWidth = v.videoWidth || 1280;
           const videoHeight = v.videoHeight || 720;
 
-          if (!landmarks || !transformMatrix) {
-            this.latest = {
-              hasFace: false,
-              position: { x: 0, y: 0, z: 0 },
-              rotation: { x: 0, y: 0, z: 0, w: 1 },
-              scale: 1,
-              liveScale: 1,
-              calibScale: null,
-              landmarks: landmarks ?? undefined,
-              videoWidth,
-              videoHeight,
-              transformMatrix,
-            };
-          } else {
-            const store = useTryOnStore.getState();
-            const frame = store.selectedFrame();
-            const aspect = videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-            const pose = computePose({
-              landmarks,
-              transformMatrix,
-              aspect,
-              scaleMul: frame.fit.scaleMul,
-              yOffsetFrac: frame.fit.yOffsetFrac,
-              frameWidthMm: frame.fit.frameWidthMm,
-              faceProfile: store.faceProfile,
-              debugLog: store.debugPoseLog,
-            });
-            if (!pose) {
-              this.latest = {
-                hasFace: false,
-                position: { x: 0, y: 0, z: 0 },
-                rotation: { x: 0, y: 0, z: 0, w: 1 },
-                scale: 1,
-                liveScale: 1,
-                calibScale: null,
-                landmarks,
-                videoWidth,
-                videoHeight,
-                transformMatrix,
-              };
-            } else {
-              this.latest = {
-                hasFace: true,
-                position: {
-                  x: pose.position.x,
-                  y: pose.position.y,
-                  z: pose.position.z,
-                },
-                rotation: {
-                  x: pose.quaternion.x,
-                  y: pose.quaternion.y,
-                  z: pose.quaternion.z,
-                  w: pose.quaternion.w,
-                },
-                scale: pose.scale,
-                liveScale: pose.liveScale,
-                calibScale: pose.calibScale,
-                landmarks,
-                videoWidth,
-                videoHeight,
-                transformMatrix,
-              };
-            }
-          }
+          const store = useTryOnStore.getState();
+          const sku = store.selectedFrame();
+          this.latest = buildTrackingFrame({
+            landmarks,
+            transformMatrix,
+            videoWidth,
+            videoHeight,
+            timestampMs: metadata?.mediaTime != null
+              ? metadata.mediaTime * 1000
+              : now,
+            detectedAtMs: performance.now(),
+            sku,
+            faceProfile: store.faceProfile,
+            headAnchors: store.headAnchors,
+            glassesGeom: store.glassesGeom[sku.id] ?? null,
+            perspTune: store.perspTune,
+            cameraCalib: store.cameraCalib,
+            debugLog: store.debugPoseLog,
+          });
         } catch (err) {
           console.warn("[EyeNetra:mediapipe] detect skipped", err);
         }
@@ -210,14 +167,18 @@ export class MediaPipeProvider implements TrackingProvider {
     }
   }
 
-  private tickFn: ((now: number) => void) | null = null;
+  private tickFn:
+    | ((now: number, metadata?: VideoFrameMetadata) => void)
+    | null = null;
 
   private schedule() {
     if (this.cancelled || !this.video || !this.tickFn) return;
     const video = this.video as VideoWithFrameCallback;
     if (typeof video.requestVideoFrameCallback === "function") {
       this.usingVfc = true;
-      this.handle = video.requestVideoFrameCallback((ts) => this.tickFn!(ts));
+      this.handle = video.requestVideoFrameCallback((ts, meta) =>
+        this.tickFn!(ts, meta),
+      );
     } else {
       this.usingVfc = false;
       this.handle = requestAnimationFrame((ts) => this.tickFn!(ts));

@@ -97,11 +97,11 @@ export function jeelizDetectToFrame(input: JeelizPoseInput): TrackingFrame {
     };
   }
 
-  let rx = detect.rx;
+  const rx = detect.rx;
   let ry = detect.ry;
   let rz = detect.rz;
   let x = detect.x;
-  let y = detect.y;
+  const y = detect.y;
   if (mirrorVideo) {
     ry = -ry;
     rz = -rz;

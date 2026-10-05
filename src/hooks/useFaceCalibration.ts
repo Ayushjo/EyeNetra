@@ -7,10 +7,17 @@ import {
   buildProfileFromMeasures,
   measureFacePx,
   saveFaceProfile,
+  stableMeasureIndices,
   type FaceMeasurePx,
   type FaceProfile,
 } from "@/lib/faceProfile";
 import { outerEyeSpanScene } from "@/lib/fitPose";
+import {
+  computeScaleCorrection,
+  estimateFocalFit,
+  saveCameraCalib,
+} from "@/lib/cameraCalib";
+import { canonicalHeadAnchors, clearHeadAnchors, isFrontalHeadPose, refineHeadAnchors, saveHeadAnchors, type AnchorSample } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type CalibrationStatus =
@@ -55,19 +62,34 @@ export function useFaceCalibration() {
     console.info("[EyeNetra:calib:write] calibrate() START (user or caller)");
 
     const measures: FaceMeasurePx[] = [];
+    const samples: AnchorSample[] = [];
+    let lastAspect = 16 / 9;
+    let lastTimestampMs = -Infinity;
     const start = performance.now();
     const intervalMs = CALIB_DURATION_MS / CALIB_TARGET_FRAMES;
 
     try {
       while (performance.now() - start < CALIB_DURATION_MS) {
-        const { landmarks, hasFace, videoWidth, videoHeight } =
+        const { trackingFrame } =
           useTryOnStore.getState();
-        if (hasFace && landmarks && landmarks.length > 476) {
-          const aspect =
-            videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
+        const { landmarks, hasFace, videoWidth, videoHeight, transformMatrix, timestampMs } =
+          trackingFrame ?? {};
+        if (
+          hasFace && landmarks && landmarks.length > 476 && transformMatrix &&
+          typeof videoWidth === "number" && videoWidth > 0 &&
+          typeof videoHeight === "number" && videoHeight > 0 &&
+          timestampMs != null && Number.isFinite(timestampMs) &&
+          timestampMs > lastTimestampMs && isFrontalHeadPose(transformMatrix)
+        ) {
+          lastTimestampMs = timestampMs;
+          const aspect = videoWidth / videoHeight;
+          lastAspect = aspect;
           const span = outerEyeSpanScene(landmarks, aspect);
-          const m = measureFacePx(landmarks, span);
-          if (m) measures.push(m);
+          const m = measureFacePx(landmarks, span, videoWidth, videoHeight);
+          if (m) {
+            measures.push(m);
+            samples.push({ landmarks, transformMatrix });
+          }
         }
         const elapsed = performance.now() - start;
         if (mounted.current) {
@@ -76,25 +98,90 @@ export function useFaceCalibration() {
         await new Promise<void>((r) => setTimeout(r, intervalMs));
       }
 
-      const profile = buildProfileFromMeasures(measures);
+      const keptIndices = stableMeasureIndices(measures);
+      const stableMeasures = keptIndices.map((i) => measures[i]);
+      const stableSamples = keptIndices.map((i) => samples[i]);
+      const profile = buildProfileFromMeasures(stableMeasures);
       if (!profile) {
         if (mounted.current) {
           setStatus("error");
-          setError("Hold still and retry — not enough steady frames.");
+          setError("Face the camera and hold still — not enough distinct steady frames.");
           setProgress(0);
         }
         return;
       }
 
       saveFaceProfile(profile);
-      useTryOnStore.getState().setFaceProfile(profile);
+      const store = useTryOnStore.getState();
+      store.setFaceProfile(profile);
+
+      // Camera correctness: solver-FOV self-check + iris scale correction,
+      // averaged over the same burst frames.
+      const fovDeg = store.cameraCalib.fovDeg;
+      let rms: number | null = null;
+      if (stableSamples.length) {
+        const last = stableSamples[stableSamples.length - 1];
+        const focal = estimateFocalFit(
+          last.landmarks,
+          last.transformMatrix,
+          lastAspect,
+        );
+        if (focal) {
+          rms = focal.rms;
+          console.info(
+            `[EyeNetra:calib] solver-FOV self-check: fit=${focal.fovDeg.toFixed(1)}° (render=${fovDeg}°) rms=${focal.rms.toFixed(4)}`,
+          );
+        }
+        let corrSum = 0;
+        let corrN = 0;
+        for (const s of stableSamples) {
+          const c = computeScaleCorrection(
+            s.landmarks,
+            s.transformMatrix,
+            lastAspect,
+            fovDeg,
+            profile,
+          );
+          if (c !== 1) {
+            corrSum += c;
+            corrN++;
+          }
+        }
+        const scaleCorrection = corrN
+          ? Math.min(1.4, Math.max(0.7, corrSum / corrN))
+          : 1;
+        store.setCameraCalib({ scaleCorrection, rms });
+        saveCameraCalib({ fovDeg, scaleCorrection, rms });
+        console.info(
+          `[EyeNetra:calib] scaleCorrection=${scaleCorrection.toFixed(3)} (n=${corrN})`,
+        );
+
+        // Per-user anatomical anchor refinement.
+        const refined = refineHeadAnchors(
+          stableSamples,
+          lastAspect,
+          fovDeg,
+          canonicalHeadAnchors(store.tragionTune),
+        );
+        if (refined) {
+          store.setHeadAnchors(refined);
+          saveHeadAnchors(refined);
+          console.info(
+            `[EyeNetra:calib] headAnchors calibrated: seat=(${refined.seatHeadCm.x.toFixed(2)}, ${refined.seatHeadCm.y.toFixed(2)}, ${refined.seatHeadCm.z.toFixed(2)})cm`,
+          );
+        }
+        else {
+          store.setHeadAnchors(canonicalHeadAnchors(store.tragionTune));
+          clearHeadAnchors();
+        }
+      }
       if (mounted.current) {
         setLastProfile(profile);
         setStatus("success");
         setProgress(1);
       }
       console.info(
-        `[EyeNetra:calib] saved faceProfile ipdMm=${profile.ipdMm.toFixed(1)} faceWidthMm=${profile.faceWidthMm.toFixed(1)} refSpan=${profile.refEyeSpanScene.toFixed(3)} kept=${measures.length}`,
+        `[EyeNetra:calib] saved faceProfile ipdMm=${profile.ipdMm.toFixed(1)} faceWidthMm=${profile.faceWidthMm.toFixed(1)} refSpan=${profile.refEyeSpanScene.toFixed(3)} kept=${stableSamples.length}`,
       );
     } catch (e) {
       if (mounted.current) {

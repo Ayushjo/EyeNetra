@@ -16,6 +16,7 @@ import {
   type Object3D,
 } from "three";
 import type { FrameSku, FrameVariant } from "@/data/frames";
+import type { GlassesGeom } from "@/lib/headAnchors";
 
 function isLensName(name: string): boolean {
   const n = name.toLowerCase();
@@ -77,7 +78,82 @@ export type PivotDebug = {
   bboxSize: [number, number, number];
   /** Local offset for the child mesh under the face anchor (usually 0 after recenter). */
   localOffset: [number, number, number];
+  /** Scanned geometry (normalized width-1 units) — null when the scan fell back. */
+  geom: GlassesGeom | null;
 };
+
+/**
+ * Scan the normalized model for the fit pivot and the hinge. Runs once per
+ * GLB load.
+ *
+ * Fit pivot = centre of the LENS meshes (x centred, y = lens bbox centre,
+ * z = lens front). This is the optician's pupil-height rule: the pupils sit
+ * on (slightly above) the lens centre, whatever the frame shape — a thin-bar
+ * aviator, a tall wraparound shield or a deep acetate square all fit the same
+ * way. The previous "bridge top minus 7 mm" pivot hung the Sport and Studio
+ * frames ~1.5 cm too high (lens bottoms on the eye line, live check 5 Oct).
+ *
+ * Returns null (callers fall back to the bbox pivot) when no lens mesh is
+ * identified or the hinge band is empty.
+ */
+function scanGlassesGeom(
+  root: Group,
+  fit: FrameSku["fit"],
+): GlassesGeom | null {
+  root.updateMatrixWorld(true);
+  const v = new Vector3();
+  const lensBox = new Box3();
+  let lensVerts = 0;
+  const hingeSum = new Vector3();
+  let hingeCount = 0;
+
+  root.traverse((obj: Object3D) => {
+    if (!(obj instanceof Mesh)) return;
+    const pos = obj.geometry?.getAttribute?.("position");
+    if (!pos) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    const isLens = mats.some((m) =>
+      fit.lensMaterialNames
+        ? fit.lensMaterialNames.includes(m.name)
+        : isLensName(m.name || obj.name || ""),
+    );
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(obj.matrixWorld);
+      if (isLens) {
+        lensBox.expandByPoint(v);
+        lensVerts++;
+      }
+      // Hinge band: outermost 6% of the width, within 0.3 widths of the
+      // front plane (wraparounds hinge further back than flat fronts).
+      if (Math.abs(v.x) > 0.44 && v.z > -0.3) {
+        hingeSum.add(v.set(Math.abs(v.x), v.y, v.z));
+        hingeCount++;
+      }
+    }
+  });
+
+  if (lensVerts < 12) {
+    console.warn(
+      `[EyeNetra:geom] fit scan fell back (lensVerts=${lensVerts}) — using bbox pivot`,
+    );
+    return null;
+  }
+
+  const center = lensBox.getCenter(new Vector3());
+  // The fit pivot never depends on the hinge: if the hinge band is empty,
+  // assume hinges level with the lens centre at the frame edge.
+  const hinge =
+    hingeCount > 0
+      ? hingeSum.divideScalar(hingeCount)
+      : new Vector3(0.5, center.y, lensBox.max.z - 0.05);
+  if (hingeCount === 0) {
+    console.warn(`[EyeNetra:geom] hinge band empty — assuming hinge at lens-centre height`);
+  }
+  return {
+    bridgeLocal: { x: 0, y: center.y, z: lensBox.max.z },
+    hingeLocal: { x: hinge.x, y: hinge.y, z: hinge.z },
+  };
+}
 
 /**
  * Orient once, width-normalize, then pin lens plane to z=0 with temples in -Z.
@@ -89,8 +165,9 @@ export type PivotDebug = {
  */
 function normalizeGlasses(
   root: Group,
-  modelEuler: [number, number, number],
+  fit: FrameSku["fit"],
 ): PivotDebug {
+  const modelEuler = fit.modelEuler;
   root.rotation.copy(
     new Euler(modelEuler[0], modelEuler[1], modelEuler[2], "XYZ"),
   );
@@ -141,6 +218,33 @@ function normalizeGlasses(
   root.scale.z *= TEMPLE_DEPTH_MUL;
   root.updateMatrixWorld(true);
 
+  // Bridge-anchored pivot: move the nose-pad contact point to the origin so
+  // the anatomical seat anchor IS the contact point. Falls back to the bbox
+  // pivot (front-center) when the scan can't find a plausible bridge.
+  const override = fit.bridgeLocalOverride;
+  let geom = scanGlassesGeom(root, fit);
+  if (override) {
+    geom = {
+      bridgeLocal: { x: override[0], y: override[1], z: override[2] },
+      hingeLocal: geom?.hingeLocal ?? { x: 0.5, y: override[1], z: 0 },
+    };
+  }
+  if (geom) {
+    root.position.x -= geom.bridgeLocal.x;
+    root.position.y -= geom.bridgeLocal.y;
+    root.position.z -= geom.bridgeLocal.z;
+    root.updateMatrixWorld(true);
+    // Express hinge relative to the new (contact-point) origin.
+    geom = {
+      bridgeLocal: { x: 0, y: 0, z: 0 },
+      hingeLocal: {
+        x: geom.hingeLocal.x - geom.bridgeLocal.x,
+        y: geom.hingeLocal.y - geom.bridgeLocal.y,
+        z: geom.hingeLocal.z - geom.bridgeLocal.z,
+      },
+    };
+  }
+
   const boxAfter = new Box3().setFromObject(root);
   const centerAfter = new Vector3();
   const sizeAfter = new Vector3();
@@ -151,6 +255,7 @@ function normalizeGlasses(
     bboxCenter: [centerAfter.x, centerAfter.y, centerAfter.z],
     bboxSize: [sizeAfter.x, sizeAfter.y, sizeAfter.z],
     localOffset: [0, 0, 0],
+    geom,
   };
 
   console.info(
@@ -181,9 +286,9 @@ export function GlassesModel({
 
   const { cloned, pivot } = useMemo(() => {
     const root = scene.clone(true) as Group;
-    const pivotInfo = normalizeGlasses(root, fit.modelEuler);
+    const pivotInfo = normalizeGlasses(root, fit);
     return { cloned: root, pivot: pivotInfo };
-  }, [scene, fit.modelEuler]);
+  }, [scene, fit]);
 
   useEffect(() => {
     onPivotDebug?.(pivot);
@@ -232,8 +337,13 @@ export function GlassesModel({
           next = new MeshStandardMaterial();
         }
         next.name = mat.name;
-        // Retain authored transparent pads instead of painting them opaque.
-        if (lens || !mat.transparent) applyVariant(next, lens, variant, depthTest, quality);
+        // Authored transparency outside the lens list is only trusted for
+        // nose pads: the round frame's GLB ships its TEMPLES as a BLEND
+        // material, which rendered them see-through (scripts/inspect-glb.mjs
+        // material_2 z[0.00..0.48]). Everything else gets the frame finish.
+        const keepTransparent =
+          !lens && mat.transparent && /transparent|pad|nose/i.test(mat.name || name);
+        if (!keepTransparent) applyVariant(next, lens, variant, depthTest, quality);
         owned.push(next);
         if (Array.isArray(obj.material)) obj.material[i] = next;
         else obj.material = next;

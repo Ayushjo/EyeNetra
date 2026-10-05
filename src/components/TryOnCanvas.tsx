@@ -16,7 +16,6 @@ import {
   SRGBColorSpace,
   Vector3,
 } from "three";
-import { PERSPECTIVE_FOV_DEG } from "@/lib/fitPose";
 import { GlassesModel, type PivotDebug } from "@/components/GlassesModel";
 import { FaceMeshOccluder } from "@/components/FaceMeshOccluder";
 import { useFitEngine } from "@/hooks/useFitEngine";
@@ -43,15 +42,17 @@ function GlassesAnchor() {
   const axesRef = useRef<AxesHelper | null>(null);
 
   const onPivotDebug = useCallback((info: PivotDebug) => {
-    // Model is recentered so bridge → origin; keep child offset at 0.
-    // Bbox center log is the confirmation the user asked for.
+    // Model is recentered so the nose-pad contact → origin; offset stays 0.
     console.info(
       `[EyeNetra:pivot] confirmed for ${frame.glbPath}: bbox.center=`,
       info.bboxCenter,
-      `localOffset=`,
-      info.localOffset,
+      `geom=`,
+      info.geom,
     );
-  }, [frame.glbPath]);
+    if (info.geom) {
+      useTryOnStore.getState().setGlassesGeom(frameId, info.geom);
+    }
+  }, [frame.glbPath, frameId]);
 
   useEffect(() => {
     if (!showFitDebug) {
@@ -127,6 +128,7 @@ function GlassesAnchor() {
  */
 function Cameras() {
   const renderMode = useTryOnStore((s) => s.renderMode);
+  const fovDeg = useTryOnStore((s) => s.cameraCalib.fovDeg);
   const videoWidth = useTryOnStore((s) => s.videoWidth);
   const videoHeight = useTryOnStore((s) => s.videoHeight);
   const { size } = useThree();
@@ -141,7 +143,7 @@ function Cameras() {
     return (
       <PerspectiveCamera
         makeDefault
-        fov={PERSPECTIVE_FOV_DEG}
+        fov={fovDeg}
         near={1}
         far={10000}
         position={[0, 0, 0]}
@@ -163,13 +165,16 @@ function Cameras() {
 }
 
 function Scene() {
+  const light = useTryOnStore((s) => s.lightEstimate);
+  const tint = `rgb(${Math.round(light.color[0] * 255)}, ${Math.round(light.color[1] * 255)}, ${Math.round(light.color[2] * 255)})`;
   return (
     <>
       <Cameras />
-      {/* Key + fill for shape; the Environment supplies realistic reflections. */}
-      <ambientLight intensity={0.35} />
-      <directionalLight position={[2, 3, 4]} intensity={0.9} />
-      <directionalLight position={[-3, 1, 2]} intensity={0.35} />
+      {/* Key + fill for shape, driven by the video-frame light estimate;
+          the Environment supplies realistic reflections. */}
+      <ambientLight intensity={light.ambient} color={tint} />
+      <directionalLight position={[2, 3, 4]} intensity={light.key} color={tint} />
+      <directionalLight position={[-3, 1, 2]} intensity={light.key * 0.4} />
       {/* Self-contained studio env map (no external HDRI): soft box lights that
           give metal temples and lenses real specular highlights + reflections.
           background={false} keeps the overlay transparent over the webcam. */}

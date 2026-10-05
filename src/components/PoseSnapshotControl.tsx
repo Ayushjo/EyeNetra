@@ -31,9 +31,9 @@ const POSE_IDS = [
  * Pose, click the matching button once face is locked.
  */
 export function PoseSnapshotControl() {
-  if (process.env.NODE_ENV !== "development") return null;
-
   const hasFace = useTryOnStore((s) => s.hasFace);
+
+  if (process.env.NODE_ENV !== "development") return null;
 
   const download = (id: (typeof POSE_IDS)[number]["id"]) => {
     const meta = POSE_IDS.find((p) => p.id === id)!;

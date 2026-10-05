@@ -4,6 +4,11 @@ import { useEffect, useRef } from "react";
 import { useFaceCalibration } from "@/hooks/useFaceCalibration";
 import { useFraming } from "@/hooks/useFraming";
 import { clearFaceProfile, loadFaceProfile } from "@/lib/faceProfile";
+import { canonicalHeadAnchors, clearHeadAnchors, loadHeadAnchors } from "@/lib/headAnchors";
+import {
+  CAMERA_CALIB_STORAGE_KEY,
+  loadCameraCalib,
+} from "@/lib/cameraCalib";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export function FitCalibration() {
@@ -34,12 +39,25 @@ export function FitCalibration() {
         refEyeSpanScene: stored.refEyeSpanScene,
       });
       setFaceProfile(stored);
+      const anchors = loadHeadAnchors();
+      if (anchors) useTryOnStore.getState().setHeadAnchors(anchors);
+    }
+    const calib = loadCameraCalib();
+    if (calib) {
+      useTryOnStore.getState().setCameraCalib(calib);
+      console.info("[EyeNetra:calib:write] hydrate cameraCalib", calib);
     }
   }, [setFaceProfile]);
 
   const onClear = () => {
     clearFaceProfile();
+    clearHeadAnchors();
     setFaceProfile(null);
+    useTryOnStore.getState().setHeadAnchors(canonicalHeadAnchors(useTryOnStore.getState().tragionTune));
+    useTryOnStore.getState().setCameraCalib({ scaleCorrection: 1, rms: null });
+    try {
+      localStorage.removeItem(CAMERA_CALIB_STORAGE_KEY);
+    } catch {}
   };
 
   return (

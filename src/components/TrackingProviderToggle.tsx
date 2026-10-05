@@ -5,12 +5,12 @@ import type { TrackingProviderId } from "@/tracking/types";
 
 /** Dev-only: switch TrackingProvider. Stops the inactive engine fully. */
 export function TrackingProviderToggle() {
-  if (process.env.NODE_ENV !== "development") return null;
-
   const id = useTryOnStore((s) => s.trackingProviderId) ?? "mediapipe";
   const setTrackingProviderId = useTryOnStore(
     (s) => s.setTrackingProviderId,
   );
+
+  if (process.env.NODE_ENV !== "development") return null;
 
   const select = (next: TrackingProviderId) => {
     if (typeof setTrackingProviderId !== "function") {
