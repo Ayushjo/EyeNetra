@@ -47,7 +47,8 @@ export function canonicalHeadAnchors(tune?: TragionTune): HeadAnchors {
   };
 }
 
-export const HEAD_ANCHORS_STORAGE_KEY = "eyenetra:headAnchors:v1";
+// v2: ear-rest offset changed (5 Oct) — v1 anchors carry the old tragion estimate.
+export const HEAD_ANCHORS_STORAGE_KEY = "eyenetra:headAnchors:v2";
 
 /** Only measured anchors are persisted; canonical anchors are always rebuilt. */
 export function saveHeadAnchors(anchors: HeadAnchors): void {

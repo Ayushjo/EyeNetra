@@ -69,9 +69,12 @@ export function VoiceAgentPanel() {
     disconnect,
   } = useVoiceAgent({ onTryOnFrame: showOnFace });
 
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  // Scroll the transcript box itself — scrollIntoView would scroll the whole
+  // page and undo the "bring the face into view" scroll on every new line.
+  const transcriptBoxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const box = transcriptBoxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
   }, [transcript]);
 
   const connected = status === "connected";
@@ -179,7 +182,7 @@ export function VoiceAgentPanel() {
         <p className="border-b border-zinc-100 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
           Conversation
         </p>
-        <div className="flex max-h-56 min-h-24 flex-col gap-2 overflow-y-auto px-4 py-3">
+        <div ref={transcriptBoxRef} className="flex max-h-56 min-h-24 flex-col gap-2 overflow-y-auto px-4 py-3">
           {transcript.length === 0 ? (
             <p className="text-sm text-zinc-400">
               The conversation transcript will appear here once you connect.
@@ -199,7 +202,6 @@ export function VoiceAgentPanel() {
               </p>
             ))
           )}
-          <div ref={transcriptEndRef} />
         </div>
       </div>
     </section>
