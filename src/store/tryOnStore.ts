@@ -111,6 +111,8 @@ type TryOnState = {
   showcase: { name: string; brand: string; at: number } | null;
   /** Hide dev-only tuning panels (default: hidden — this is a customer screen). */
   showDevControls: boolean;
+  /** Dev: render the depth occluder (off = see raw glasses, no face masking). */
+  showOccluder: boolean;
 
   selectedFrame: () => FrameSku;
   selectedVariant: () => FrameVariant;
@@ -131,6 +133,7 @@ type TryOnState = {
   setLightEstimate: (estimate: LightEstimate) => void;
   setShowcase: (showcase: { name: string; brand: string } | null) => void;
   setShowDevControls: (value: boolean) => void;
+  setShowOccluder: (value: boolean) => void;
   setCapture: (capture: CaptureState | null) => void;
   /** Architected refinement nudge for capture (not user-facing yet). */
   setCaptureRefine: (refine: Partial<CaptureRefine>) => void;
@@ -181,6 +184,7 @@ function createTryOnStore() {
     lightEstimate: { ...DEFAULT_LIGHT_ESTIMATE },
     showcase: null,
     showDevControls: false,
+    showOccluder: true,
     debugPoseLog: false,
     showFitDebug: false,
   capture: null,
@@ -243,6 +247,7 @@ function createTryOnStore() {
     setShowcase: (showcase) =>
       set({ showcase: showcase ? { ...showcase, at: Date.now() } : null }),
     setShowDevControls: (value) => set({ showDevControls: value }),
+    setShowOccluder: (value) => set({ showOccluder: value }),
     setGlassesGeom: (frameId, geom) =>
       set({ glassesGeom: { ...get().glassesGeom, [frameId]: geom } }),
     setTragionTune: (tune) => {

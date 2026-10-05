@@ -17,7 +17,7 @@ import {
   PERSPECTIVE_FOV_DEG,
 } from "@/lib/fitPose";
 import { FRAMES } from "@/data/frames";
-import { LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
+import { LENS_AHEAD_OF_PUPIL_CM, LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
 import type { LandmarkPoint } from "@/store/tryOnStore";
 
 type PoseFixture = {
@@ -113,9 +113,11 @@ describe("canonical head anchors", () => {
     })!;
     expect(pose).not.toBeNull();
     const seatDepth = -pose.position.z;
-    // Seat sits in front of the head origin.
+    // Lens plane sits in front of the head origin.
     expect(seatDepth).toBeGreaterThan(45 - 8);
     expect(seatDepth).toBeLessThan(45 - 2);
+    // The ray is cast at the PUPIL depth (lens plane minus vertex distance).
+    const pupilDepth = seatDepth + LENS_AHEAD_OF_PUPIL_CM;
     // Re-project the pose position: it must land on the mirrored observed
     // pupil-line ray (iris midpoint), dropped by the lens-centre offset
     // (identity head rotation → straight down in camera space).
@@ -123,11 +125,11 @@ describe("canonical head anchors", () => {
     const obsX = (0.55 + 0.45) / 2;
     const obsY = 0.47;
     expect(pose.position.x).toBeCloseTo(
-      (0.5 - obsX) * 2 * seatDepth * tanHalf * aspect,
+      (0.5 - obsX) * 2 * pupilDepth * tanHalf * aspect,
       6,
     );
     expect(pose.position.y).toBeCloseTo(
-      (0.5 - obsY) * 2 * seatDepth * tanHalf - LENS_CENTER_BELOW_PUPIL_CM,
+      (0.5 - obsY) * 2 * pupilDepth * tanHalf - LENS_CENTER_BELOW_PUPIL_CM,
       6,
     );
   });

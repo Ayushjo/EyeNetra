@@ -32,6 +32,8 @@ export type TrackingFrame = {
     rotation: Quat;
     scale: number;
   } | null;
+  /** Pantoscopic pitch applied (rad) — diagnostics. */
+  pantoRad?: number;
   /** Head distance from camera (cm) from the transform matrix. */
   depthCm?: number | null;
   /** Video-frame media time (ms) — filter time base. */

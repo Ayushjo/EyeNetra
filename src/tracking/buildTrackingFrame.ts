@@ -77,6 +77,13 @@ export function buildTrackingFrame(input: BuildFrameInput): TrackingFrame {
     debugLog,
   });
 
+  const pantoRad = cachedPantoRad(
+    headAnchors,
+    glassesGeom,
+    sku.id,
+    sku.fit.frameWidthMm,
+    sku.fit.templeLengthMm,
+  );
   const perspPose = computePosePerspective({
     landmarks,
     transformMatrix,
@@ -87,13 +94,7 @@ export function buildTrackingFrame(input: BuildFrameInput): TrackingFrame {
     yOffsetCm: (sku.fit.perspYOffsetCm ?? 0) + perspTune.yOffsetCm,
     zOffsetCm: (sku.fit.perspZOffsetCm ?? 0) + perspTune.zOffsetCm,
     headAnchors,
-    pantoRad: cachedPantoRad(
-      headAnchors,
-      glassesGeom,
-      sku.id,
-      sku.fit.frameWidthMm,
-      sku.fit.templeLengthMm,
-    ),
+    pantoRad,
     scaleCorrection: cameraCalib?.scaleCorrection ?? 1,
     fovDeg: cameraCalib?.fovDeg,
     debugLog,
@@ -162,5 +163,6 @@ export function buildTrackingFrame(input: BuildFrameInput): TrackingFrame {
         }
       : null,
     depthCm,
+    pantoRad,
   };
 }

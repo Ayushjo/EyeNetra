@@ -36,7 +36,7 @@ export type HeadAnchors = {
 
 export type TragionTune = { backCm: number; upCm: number };
 
-export const DEFAULT_TRAGION_TUNE: TragionTune = { backCm: 1.2, upCm: 0.2 };
+export const DEFAULT_TRAGION_TUNE: TragionTune = { backCm: 1.2, upCm: -0.4 };
 
 export function canonicalHeadAnchors(tune?: TragionTune): HeadAnchors {
   return {
@@ -155,8 +155,8 @@ export type PantoscopicInput = {
 };
 
 export const MAX_PANTOSCOPIC_RAD = (15 * Math.PI) / 180;
-/** Temples rest slightly above the tragus. */
-export const EAR_REST_UP_CM = 0.4;
+/** Temple rest point relative to the tragion estimate (ear-root groove). */
+export const EAR_REST_UP_CM = 0.2;
 
 const _hinge = new Vector3();
 const _dir = new Vector3();

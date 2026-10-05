@@ -3,7 +3,7 @@ import { LM } from "@/lib/mediapipe/constants";
 import { landmarkToWorld } from "@/lib/coords";
 import type { FaceProfile } from "@/lib/faceProfile";
 import { decomposeHeadMatrix, type HeadAnchors } from "@/lib/headAnchors";
-import { LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
+import { LENS_AHEAD_OF_PUPIL_CM, LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
 import { CANONICAL_CM } from "@/lib/canonicalFace";
 import type { LandmarkPoint } from "@/store/tryOnStore";
 
@@ -350,26 +350,36 @@ export function computePosePerspective(input: PerspectiveInput): FitPose | null 
     //  XY is not re-applied (that would double count).
     //  OFFSETS: intentional 3D displacements (nose-pad standoff, per-user
     //  seatOffsetHeadCm) are rotated by the head pose and added in full.
-    _seatWorld.copy(headAnchors.seatHeadCm).applyMatrix4(_mp);
-    // Degenerate (rotation-only) matrices leave the seat near the camera
+    // Depth of the PUPIL line (what the iris landmarks actually observe):
+    // the lens-fit seat minus its own ahead/below offsets, through the head
+    // matrix. Ray-casting the iris pixel to the lens-plane depth instead
+    // produced ~1.5 cm·sin(yaw) of lateral parallax error (frame slid
+    // forward/sideways on turns, live 5 Oct).
+    _seatLocal
+      .copy(headAnchors.seatHeadCm)
+      .add(_trim.set(0, LENS_CENTER_BELOW_PUPIL_CM, -LENS_AHEAD_OF_PUPIL_CM));
+    _seatWorld.copy(_seatLocal).applyMatrix4(_mp);
+    // Degenerate (rotation-only) matrices leave the point near the camera
     // plane — fall back to the head depth rather than clamping to nonsense.
-    const rawSeatDepth = -_seatWorld.z;
-    const seatDepth = rawSeatDepth > depth * 0.5 ? rawSeatDepth : depth;
+    const rawPupilDepth = -_seatWorld.z;
+    const pupilDepth = rawPupilDepth > depth * 0.5 ? rawPupilDepth : depth;
 
-    // Observed pupil line: midpoint of the two iris centres (the most
-    // precisely tracked landmarks). The glasses pivot is the lens centre, so
-    // the lens-centre-below-pupil drop is applied as a head-local offset.
     const seatLmX = (leftIris.x + rightIris.x) / 2;
     const seatLmY = (leftIris.y + rightIris.y) / 2;
     position = new Vector3(
-      (0.5 - seatLmX) * 2 * seatDepth * tanHalf * aspect, // mirrored
-      (0.5 - seatLmY) * 2 * seatDepth * tanHalf,
-      -seatDepth,
+      (0.5 - seatLmX) * 2 * pupilDepth * tanHalf * aspect, // mirrored
+      (0.5 - seatLmY) * 2 * pupilDepth * tanHalf,
+      -pupilDepth,
     );
 
-    // Head-local offset → camera space via the (unmirrored) head rotation,
-    // then mirror X to match the mirrored video.
-    _seatLocal.set(0, -LENS_CENTER_BELOW_PUPIL_CM, nosePadOffsetMm / 10);
+    // Pupil → lens-centre offset in head space (down, ahead to the lens
+    // plane, plus nose-pad standoff and any per-user offset), rotated by the
+    // (unmirrored) head pose, then mirrored in X for the mirrored video.
+    _seatLocal.set(
+      0,
+      -LENS_CENTER_BELOW_PUPIL_CM,
+      LENS_AHEAD_OF_PUPIL_CM + nosePadOffsetMm / 10,
+    );
     if (headAnchors.seatOffsetHeadCm) _seatLocal.add(headAnchors.seatOffsetHeadCm);
     if (_seatLocal.lengthSq() > 0) {
       _seatLocal.applyQuaternion(_quatP);

@@ -35,6 +35,8 @@ export function TryOnControls({
   const setPerspTune = useTryOnStore((s) => s.setPerspTune);
   const showDevControls = useTryOnStore((s) => s.showDevControls);
   const setShowDevControls = useTryOnStore((s) => s.setShowDevControls);
+  const showOccluder = useTryOnStore((s) => s.showOccluder);
+  const setShowOccluder = useTryOnStore((s) => s.setShowOccluder);
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
@@ -92,6 +94,14 @@ export function TryOnControls({
                 onChange={(e) => setShowFitDebug(e.target.checked)}
               />
               Anchor axes
+            </label>
+            <label className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+              <input
+                type="checkbox"
+                checked={showOccluder}
+                onChange={(e) => setShowOccluder(e.target.checked)}
+              />
+              Face occluder
             </label>
             <span className="ml-auto text-xs text-zinc-500">
               tracker: {trackingProviderId ?? "mediapipe"}

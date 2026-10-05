@@ -94,7 +94,8 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = false;
     const anchor = anchorRef.current;
     const state = useTryOnStore.getState();
-    const { trackingFrame, hasFace, videoWidth, videoHeight, transformMatrix, renderMode } = state;
+    const { trackingFrame, hasFace, videoWidth, videoHeight, transformMatrix, renderMode, showOccluder } = state;
+    if (!showOccluder) return;
     const landmarks = trackingFrame?.landmarks ?? state.landmarks;
     const rawPose = trackingFrame?.anchorPose;
     if (renderMode !== "perspective" || !hasFace || !landmarks || !anchor || !anchor.visible || !rawPose) return;

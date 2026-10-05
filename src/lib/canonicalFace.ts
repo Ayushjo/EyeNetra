@@ -58,12 +58,22 @@ export const CANONICAL_SELLION: Vector3 = canonicalVec(168).lerp(
  * this is where that centre goes in head space.
  */
 export const LENS_CENTER_BELOW_PUPIL_CM = 0.3;
+/** Cornea apex sits ~0.9 cm in front of the canthi plane. */
+export const CORNEA_AHEAD_OF_CANTHI_CM = 0.9;
+/** Pupil line midpoint in head space (what the iris landmarks observe). */
+export const CANONICAL_PUPIL_MID: Vector3 = new Vector3(
+  0,
+  (canonicalVec(33).y + canonicalVec(133).y + canonicalVec(362).y + canonicalVec(263).y) / 4,
+  (canonicalVec(33).z + canonicalVec(133).z + canonicalVec(362).z + canonicalVec(263).z) / 4 +
+    CORNEA_AHEAD_OF_CANTHI_CM,
+);
 export const CANONICAL_LENS_FIT: Vector3 = new Vector3(
   0,
-  (canonicalVec(33).y + canonicalVec(133).y + canonicalVec(362).y + canonicalVec(263).y) / 4 -
-    LENS_CENTER_BELOW_PUPIL_CM,
+  CANONICAL_PUPIL_MID.y - LENS_CENTER_BELOW_PUPIL_CM,
   CANONICAL_SELLION.z,
 );
+/** Lens plane ahead of the pupils (vertex distance incl. pad standoff). */
+export const LENS_AHEAD_OF_PUPIL_CM = CANONICAL_LENS_FIT.z - CANONICAL_PUPIL_MID.z;
 
 /**
  * The canonical mesh has no ears. Vertices 234/454 sit at the cheek-ear
