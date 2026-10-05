@@ -6,18 +6,13 @@ import {
   CALIB_TARGET_FRAMES,
   buildProfileFromMeasures,
   measureFacePx,
-  saveFaceProfile,
   stableMeasureIndices,
   type FaceMeasurePx,
   type FaceProfile,
 } from "@/lib/faceProfile";
 import { outerEyeSpanScene } from "@/lib/fitPose";
-import {
-  computeScaleCorrection,
-  estimateFocalFit,
-  saveCameraCalib,
-} from "@/lib/cameraCalib";
-import { canonicalHeadAnchors, clearHeadAnchors, isFrontalHeadPose, refineHeadAnchors, saveHeadAnchors, type AnchorSample } from "@/lib/headAnchors";
+import { applyCalibration } from "@/lib/calibrationPipeline";
+import { isFrontalHeadPose, type AnchorSample } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type CalibrationStatus =
@@ -111,70 +106,7 @@ export function useFaceCalibration() {
         return;
       }
 
-      saveFaceProfile(profile);
-      const store = useTryOnStore.getState();
-      store.setFaceProfile(profile);
-
-      // Camera correctness: solver-FOV self-check + iris scale correction,
-      // averaged over the same burst frames.
-      const fovDeg = store.cameraCalib.fovDeg;
-      let rms: number | null = null;
-      if (stableSamples.length) {
-        const last = stableSamples[stableSamples.length - 1];
-        const focal = estimateFocalFit(
-          last.landmarks,
-          last.transformMatrix,
-          lastAspect,
-        );
-        if (focal) {
-          rms = focal.rms;
-          console.info(
-            `[EyeNetra:calib] solver-FOV self-check: fit=${focal.fovDeg.toFixed(1)}° (render=${fovDeg}°) rms=${focal.rms.toFixed(4)}`,
-          );
-        }
-        let corrSum = 0;
-        let corrN = 0;
-        for (const s of stableSamples) {
-          const c = computeScaleCorrection(
-            s.landmarks,
-            s.transformMatrix,
-            lastAspect,
-            fovDeg,
-            profile,
-          );
-          if (c !== 1) {
-            corrSum += c;
-            corrN++;
-          }
-        }
-        const scaleCorrection = corrN
-          ? Math.min(1.4, Math.max(0.7, corrSum / corrN))
-          : 1;
-        store.setCameraCalib({ scaleCorrection, rms });
-        saveCameraCalib({ fovDeg, scaleCorrection, rms });
-        console.info(
-          `[EyeNetra:calib] scaleCorrection=${scaleCorrection.toFixed(3)} (n=${corrN})`,
-        );
-
-        // Per-user anatomical anchor refinement.
-        const refined = refineHeadAnchors(
-          stableSamples,
-          lastAspect,
-          fovDeg,
-          canonicalHeadAnchors(store.tragionTune),
-        );
-        if (refined) {
-          store.setHeadAnchors(refined);
-          saveHeadAnchors(refined);
-          console.info(
-            `[EyeNetra:calib] headAnchors calibrated: seat=(${refined.seatHeadCm.x.toFixed(2)}, ${refined.seatHeadCm.y.toFixed(2)}, ${refined.seatHeadCm.z.toFixed(2)})cm`,
-          );
-        }
-        else {
-          store.setHeadAnchors(canonicalHeadAnchors(store.tragionTune));
-          clearHeadAnchors();
-        }
-      }
+      applyCalibration(profile, stableSamples, lastAspect);
       if (mounted.current) {
         setLastProfile(profile);
         setStatus("success");

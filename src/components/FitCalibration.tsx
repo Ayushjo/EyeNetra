@@ -18,6 +18,7 @@ export function FitCalibration() {
   const trackingProviderId = useTryOnStore((s) => s.trackingProviderId);
   const { status, progress, error, calibrate, isCapturing } =
     useFaceCalibration();
+  const autoCalib = useTryOnStore((s) => s.autoCalib);
 
   const isMediapipe = trackingProviderId === "mediapipe";
   const framing = useFraming(isMediapipe && !isCapturing);
@@ -62,6 +63,23 @@ export function FitCalibration() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
+      {/* Customers never press a button: size is measured in the background
+          whenever they look at the screen. This line is the only feedback. */}
+      {isMediapipe ? (
+        <span
+          className={`w-full text-xs ${autoCalib.applied ? "text-emerald-700" : "text-zinc-500"}`}
+        >
+          {autoCalib.applied
+            ? `Fit size measured automatically${
+                autoCalib.sigmaMm != null ? ` · ±${autoCalib.sigmaMm.toFixed(1)} mm` : ""
+              }`
+            : autoCalib.n > 0
+              ? `Measuring your fit size… ${Math.min(autoCalib.n, 40)}/40${
+                  autoCalib.sigmaMm != null ? ` · spread ${autoCalib.sigmaMm.toFixed(1)} mm` : ""
+                } — just look at the screen`
+              : "Measuring your fit size — look at the screen, eyes open"}
+        </span>
+      ) : null}
       <button
         type="button"
         onClick={() => void calibrate()}

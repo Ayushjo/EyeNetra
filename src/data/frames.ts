@@ -20,6 +20,12 @@ export type FrameSku = {
     /** Explicit GLB material roles; add lens material names when importing a SKU. */
     lensMaterialNames?: string[];
     frameWidthMm: number;
+    /**
+     * Outer lens edge to outer lens edge (2×A-size + DBL from the maker's
+     * spec, mm). When present it drives the physical scale instead of
+     * frameWidthMm/bbox, which includes end-piece flare.
+     */
+    lensSpanMm?: number;
     templeLengthMm: number;
     bridgeWidthMm: number;
     nosePadOffsetMm: number;
@@ -242,6 +248,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 122,
+      lensSpanMm: 114.0,
       templeLengthMm: 140,
       bridgeWidthMm: 21,
       nosePadOffsetMm: 2,
@@ -273,6 +280,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 136,
+      lensSpanMm: 128,
       templeLengthMm: 145,
       bridgeWidthMm: 22,
       nosePadOffsetMm: 2,
@@ -304,6 +312,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 130,
+      lensSpanMm: 122,
       templeLengthMm: 140,
       bridgeWidthMm: 18,
       nosePadOffsetMm: 2,
@@ -335,6 +344,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 142,
+      lensSpanMm: 134.0,
       templeLengthMm: 145,
       bridgeWidthMm: 17,
       nosePadOffsetMm: 2,
@@ -366,6 +376,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 138,
+      lensSpanMm: 130,
       templeLengthMm: 145,
       bridgeWidthMm: 20,
       nosePadOffsetMm: 2,
@@ -397,6 +408,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 139,
+      lensSpanMm: 131.0,
       templeLengthMm: 145,
       bridgeWidthMm: 20,
       nosePadOffsetMm: 2,
@@ -428,6 +440,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 140.4,
+      lensSpanMm: 132.4,
       templeLengthMm: 140,
       bridgeWidthMm: 14,
       nosePadOffsetMm: 2,
@@ -459,6 +472,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 136,
+      lensSpanMm: 128,
       templeLengthMm: 140,
       bridgeWidthMm: 18,
       nosePadOffsetMm: 2,
@@ -490,6 +504,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 131,
+      lensSpanMm: 123,
       templeLengthMm: 142,
       bridgeWidthMm: 19,
       nosePadOffsetMm: 2,
@@ -521,6 +536,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 148,
+      lensSpanMm: 140,
       templeLengthMm: 130,
       bridgeWidthMm: 12,
       nosePadOffsetMm: 2,
@@ -552,6 +568,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 124,
+      lensSpanMm: 116,
       templeLengthMm: 138,
       bridgeWidthMm: 20,
       nosePadOffsetMm: 2,
@@ -583,6 +600,7 @@ export const FRAMES: FrameSku[] = [
     fit: {
       lensMaterialNames: ["Lens"],
       frameWidthMm: 148,
+      lensSpanMm: 140,
       templeLengthMm: 150,
       bridgeWidthMm: 16,
       nosePadOffsetMm: 2,

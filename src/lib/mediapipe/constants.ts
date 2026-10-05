@@ -9,6 +9,11 @@ export const LM = {
   RIGHT_IRIS_INNER: 474,
   RIGHT_IRIS_OUTER: 476,
   /** Eye corners for IPD / bridge. */
+  /** Eyelid apex points (upper/lower) — eye-openness gate for iris sizing. */
+  LEFT_EYE_TOP: 159,
+  LEFT_EYE_BOTTOM: 145,
+  RIGHT_EYE_TOP: 386,
+  RIGHT_EYE_BOTTOM: 374,
   LEFT_EYE_OUTER: 33,
   LEFT_EYE_INNER: 133,
   RIGHT_EYE_INNER: 362,

@@ -146,6 +146,8 @@ export type GlassesGeom = {
   bridgeLocal: { x: number; y: number; z: number };
   /** Mean hinge point (one side, +x) in normalized model units. */
   hingeLocal: { x: number; y: number; z: number };
+  /** Outer-lens-edge to outer-lens-edge span in normalized units (bbox = 1). */
+  lensSpanNorm?: number;
 };
 
 export type PantoscopicInput = {

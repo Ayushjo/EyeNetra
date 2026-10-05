@@ -25,6 +25,8 @@ export type FaceProfile = {
 
 export type FaceMeasurePx = {
   irisDiamPx: number;
+  /** Eyelid aperture / iris diameter (both eyes, min). ≥ ~0.8 = eyes open. */
+  eyeOpenness: number;
   ipdPx: number;
   faceWidthPx: number;
   midEyeX: number;
@@ -100,8 +102,22 @@ export function measureFacePx(
   const irisDiamPx = (leftIrisDiam + rightIrisDiam) / 2;
   if (irisDiamPx < 1e-6) return null;
 
+  // Eyelid aperture relative to the iris: a half-closed eye hides the iris
+  // top/bottom and the iris-outer/inner points drift, which under-measures
+  // the ruler and inflates every mm figure derived from it.
+  const lTop = landmarks[LM.LEFT_EYE_TOP], lBot = landmarks[LM.LEFT_EYE_BOTTOM];
+  const rTop = landmarks[LM.RIGHT_EYE_TOP], rBot = landmarks[LM.RIGHT_EYE_BOTTOM];
+  const eyeOpenness =
+    lTop && lBot && rTop && rBot
+      ? Math.min(
+          dist2(lTop, lBot, videoWidth, videoHeight) / Math.max(1e-6, leftIrisDiam),
+          dist2(rTop, rBot, videoWidth, videoHeight) / Math.max(1e-6, rightIrisDiam),
+        )
+      : 1;
+
   return {
     irisDiamPx,
+    eyeOpenness,
     ipdPx: dist2(lIris, rIris, videoWidth, videoHeight),
     faceWidthPx: dist2(leftCanthus, rightCanthus, videoWidth, videoHeight),
     midEyeX: mid.x,
@@ -169,6 +185,51 @@ export function buildProfileFromMeasures(
     faceWidthMm: faceSum / n,
     refEyeSpanScene: spanSum / n,
     capturedAt: Date.now(),
+  };
+}
+
+/** Minimum eyelid aperture (fraction of iris diameter) for a usable sample. */
+export const CALIB_MIN_EYE_OPENNESS = 0.6;
+
+function median(values: number[]): number {
+  const a = values.slice().sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+export type RobustProfile = {
+  profile: FaceProfile;
+  /** Robust σ (1.4826·MAD) of per-sample faceWidthMm. */
+  sigmaMm: number;
+  n: number;
+};
+
+/**
+ * Median-based profile with a robust spread estimate. Unlike the mean, a few
+ * blink/turn frames cannot drag the ruler; the caller decides whether σ is
+ * good enough to save (customers never hold still on purpose, so the
+ * background calibrator keeps sampling until σ < 1 mm).
+ */
+export function robustProfileFromMeasures(
+  measures: FaceMeasurePx[],
+  minKept = CALIB_MIN_KEPT,
+): RobustProfile | null {
+  const good = measures.filter((m) => m.eyeOpenness >= CALIB_MIN_EYE_OPENNESS);
+  if (good.length < minKept) return null;
+  const widths = good.map((m) => pxToMm(m).faceWidthMm);
+  const ipds = good.map((m) => pxToMm(m).ipdMm);
+  const spans = good.map((m) => m.eyeSpanScene);
+  const w = median(widths);
+  const mad = median(widths.map((x) => Math.abs(x - w)));
+  return {
+    profile: {
+      ipdMm: median(ipds),
+      faceWidthMm: w,
+      refEyeSpanScene: median(spans),
+      capturedAt: Date.now(),
+    },
+    sigmaMm: 1.4826 * mad,
+    n: good.length,
   };
 }
 

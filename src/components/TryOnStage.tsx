@@ -12,6 +12,7 @@ import {
 import { WebcamFeed } from "@/components/WebcamFeed";
 import { useTrackingSession } from "@/hooks/useTrackingSession";
 import { useLightEstimate } from "@/hooks/useLightEstimate";
+import { useAutoFitCalibration } from "@/hooks/useAutoFitCalibration";
 import { useWebcam } from "@/hooks/useWebcam";
 import { detectCapabilities } from "@/lib/capabilities";
 import { useTryOnStore } from "@/store/tryOnStore";
@@ -109,6 +110,7 @@ export function TryOnStage() {
 
   useTrackingSession(videoRef, status === "ready");
   useLightEstimate(videoRef, status === "ready");
+  useAutoFitCalibration(status === "ready");
 
   const webglBlocked = capabilities && !capabilities.webgl2;
   // Match stage to camera aspect so landmarks ↔ pixels stay 1:1 (no cover crop).

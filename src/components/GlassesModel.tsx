@@ -152,6 +152,9 @@ function scanGlassesGeom(
   return {
     bridgeLocal: { x: 0, y: center.y, z: lensBox.max.z },
     hingeLocal: { x: hinge.x, y: hinge.y, z: hinge.z },
+    // Scale by the lens span when the SKU states it: the bbox width includes
+    // hinge/end-piece flare, which over-sizes the front by 2–5 %.
+    lensSpanNorm: lensBox.max.x - lensBox.min.x,
   };
 }
 

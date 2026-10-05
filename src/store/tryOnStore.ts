@@ -113,6 +113,8 @@ type TryOnState = {
   showDevControls: boolean;
   /** Dev: render the depth occluder (off = see raw glasses, no face masking). */
   showOccluder: boolean;
+  /** Background fit-size calibration progress (customer-visible, no action needed). */
+  autoCalib: { n: number; sigmaMm: number | null; applied: boolean };
 
   selectedFrame: () => FrameSku;
   selectedVariant: () => FrameVariant;
@@ -134,6 +136,7 @@ type TryOnState = {
   setShowcase: (showcase: { name: string; brand: string } | null) => void;
   setShowDevControls: (value: boolean) => void;
   setShowOccluder: (value: boolean) => void;
+  setAutoCalib: (value: { n: number; sigmaMm: number | null; applied: boolean }) => void;
   setCapture: (capture: CaptureState | null) => void;
   /** Architected refinement nudge for capture (not user-facing yet). */
   setCaptureRefine: (refine: Partial<CaptureRefine>) => void;
@@ -185,6 +188,7 @@ function createTryOnStore() {
     showcase: null,
     showDevControls: false,
     showOccluder: true,
+    autoCalib: { n: 0, sigmaMm: null, applied: false },
     debugPoseLog: false,
     showFitDebug: false,
   capture: null,
@@ -248,6 +252,7 @@ function createTryOnStore() {
       set({ showcase: showcase ? { ...showcase, at: Date.now() } : null }),
     setShowDevControls: (value) => set({ showDevControls: value }),
     setShowOccluder: (value) => set({ showOccluder: value }),
+    setAutoCalib: (value) => set({ autoCalib: value }),
     setGlassesGeom: (frameId, geom) =>
       set({ glassesGeom: { ...get().glassesGeom, [frameId]: geom } }),
     setTragionTune: (tune) => {

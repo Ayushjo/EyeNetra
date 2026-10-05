@@ -84,11 +84,17 @@ export function buildTrackingFrame(input: BuildFrameInput): TrackingFrame {
     sku.fit.frameWidthMm,
     sku.fit.templeLengthMm,
   );
+  // Physical width: prefer the maker's lens span mapped through the GLB's
+  // measured lens span (exact), else the nominal bbox width.
+  const effectiveWidthMm =
+    sku.fit.lensSpanMm && glassesGeom?.lensSpanNorm && glassesGeom.lensSpanNorm > 0.2
+      ? sku.fit.lensSpanMm / glassesGeom.lensSpanNorm
+      : sku.fit.frameWidthMm;
   const perspPose = computePosePerspective({
     landmarks,
     transformMatrix,
     aspect,
-    frameWidthMm: sku.fit.frameWidthMm,
+    frameWidthMm: effectiveWidthMm,
     nosePadOffsetMm: sku.fit.nosePadOffsetMm,
     scaleTune: (sku.fit.perspScaleTune ?? 1) * perspTune.scaleTune,
     yOffsetCm: (sku.fit.perspYOffsetCm ?? 0) + perspTune.yOffsetCm,
