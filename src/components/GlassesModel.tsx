@@ -366,6 +366,25 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
   return { entries, binsPos, binsNeg };
 }
 
+/**
+ * Temple centreline from the per-depth bins, both sides averaged (|x|), z
+ * descending from the hinge. Bins with too few vertices are skipped.
+ */
+function templeProfileFrom(deform: Deform): NonNullable<GlassesGeom["templeProfile"]> {
+  const keys = [...new Set([...deform.binsPos.keys(), ...deform.binsNeg.keys()])].sort((a, b) => a - b);
+  const z: number[] = [], x: number[] = [], y: number[] = [];
+  for (const k of keys) {
+    const p = deform.binsPos.get(k), n = deform.binsNeg.get(k);
+    const parts = [p, n].filter((b): b is TempleBin => Boolean(b && b.n >= 2));
+    if (!parts.length) continue;
+    const cnt = parts.reduce((a, b) => a + b.n, 0);
+    z.push(-(k + 0.5) * TEMPLE_BIN);
+    x.push(parts.reduce((a, b) => a + Math.abs(b.sum), 0) / cnt);
+    y.push(parts.reduce((a, b) => a + b.sumY, 0) / cnt);
+  }
+  return { z, x, y };
+}
+
 /** Rotate a temple point about its hinge's vertical axis (smooth over ~0.05 widths). */
 function foldPoint(
   x: number,
@@ -522,7 +541,11 @@ export function GlassesModel({
   const { cloned, pivot, deform } = useMemo(() => {
     const root = scene.clone(true) as Group;
     const pivotInfo = normalizeGlasses(root, fit);
-    return { cloned: root, pivot: pivotInfo, deform: prepareDeform(root, pivotInfo.geom) };
+    const deformInfo = prepareDeform(root, pivotInfo.geom);
+    if (pivotInfo.geom) {
+      pivotInfo.geom = { ...pivotInfo.geom, templeProfile: templeProfileFrom(deformInfo) };
+    }
+    return { cloned: root, pivot: pivotInfo, deform: deformInfo };
   }, [scene, fit]);
 
   // Temple fold: aim each temple at the user's ear-rest point. Recomputed only
@@ -552,6 +575,8 @@ export function GlassesModel({
       glassesGeom: geom,
       frameWidthMm: fit.frameWidthMm,
       templeLengthMm: fit.templeLengthMm,
+      scaleCm,
+      nosePadOffsetMm: fit.nosePadOffsetMm,
     });
     const fold = solveTempleFold({
       anchors: headAnchors,

@@ -148,13 +148,43 @@ export type GlassesGeom = {
   hingeLocal: { x: number; y: number; z: number };
   /** Outer-lens-edge to outer-lens-edge span in normalized units (bbox = 1). */
   lensSpanNorm?: number;
+  /**
+   * Authored temple centreline (both sides averaged, |x|), sampled by
+   * normalized z from the hinge backwards (z descending). Lets the solvers aim
+   * the temple the model actually has instead of assuming "straight back".
+   */
+  templeProfile?: { z: number[]; x: number[]; y: number[] };
 };
+
+/** Linear interpolation of the temple centreline at depth z, or null outside it. */
+export function templeAt(
+  profile: GlassesGeom["templeProfile"],
+  z: number,
+): { x: number; y: number } | null {
+  if (!profile || profile.z.length < 2) return null;
+  const { z: zs, x: xs, y: ys } = profile;
+  if (z > zs[0] || z < zs[zs.length - 1]) return null;
+  for (let i = 0; i + 1 < zs.length; i++) {
+    if (z <= zs[i] && z >= zs[i + 1]) {
+      const t = zs[i] === zs[i + 1] ? 0 : (zs[i] - z) / (zs[i] - zs[i + 1]);
+      return { x: xs[i] + (xs[i + 1] - xs[i]) * t, y: ys[i] + (ys[i + 1] - ys[i]) * t };
+    }
+  }
+  return null;
+}
 
 export type PantoscopicInput = {
   anchors: HeadAnchors;
   glassesGeom: GlassesGeom | null;
   frameWidthMm: number;
   templeLengthMm: number;
+  /**
+   * cm per normalized unit as RENDERED (effective width × scaleCorrection).
+   * With templeProfile this selects the profile solver; the legacy path used
+   * the nominal bbox width, which disagreed with the fold's ear mapping.
+   */
+  scaleCm?: number;
+  nosePadOffsetMm?: number;
 };
 
 export const MAX_PANTOSCOPIC_RAD = (15 * Math.PI) / 180;
@@ -178,6 +208,9 @@ const _ear = new Vector3();
 export function solvePantoscopicPitch(input: PantoscopicInput): number {
   const { anchors, glassesGeom, frameWidthMm, templeLengthMm } = input;
   if (!glassesGeom) return 0;
+  if (glassesGeom.templeProfile && input.scaleCm && input.scaleCm > 0) {
+    return solvePantoFromProfile(anchors, glassesGeom.templeProfile, input.scaleCm, input.nosePadOffsetMm ?? 0);
+  }
   const widthCm = frameWidthMm / 10;
   void templeLengthMm; // direction-only solve; length kept for future splay work
 
@@ -209,6 +242,41 @@ export function solvePantoscopicPitch(input: PantoscopicInput): number {
       sum += Math.atan2(_dir.y, -_dir.z);
     }
     alpha = sum / 2;
+  }
+  return Math.max(-MAX_PANTOSCOPIC_RAD, Math.min(MAX_PANTOSCOPIC_RAD, alpha));
+}
+
+/**
+ * Pitch so the AUTHORED temple passes through the ear-rest point. The frame
+ * rotates about the anchor origin, and rotating by α about +X raises the
+ * angle φ = atan2(y, −z) of every point by α. So the ear seen in glasses space
+ * sits at φ(E₀) − α and must equal the temple's φ at the ear's depth:
+ * α = φ(E₀) − φ(T(z_ear)). Iterated because z_ear moves with α. Both sides
+ * averaged; clamped to ±15°.
+ */
+function solvePantoFromProfile(
+  anchors: HeadAnchors,
+  profile: NonNullable<GlassesGeom["templeProfile"]>,
+  scaleCm: number,
+  nosePadOffsetMm: number,
+): number {
+  let alpha = 0;
+  for (let iter = 0; iter < 3; iter++) {
+    let sum = 0;
+    let n = 0;
+    for (const sgn of [1, -1] as const) {
+      const e0 = earInGlassesSpace(anchors, sgn, scaleCm, 0, nosePadOffsetMm);
+      const c = Math.cos(-alpha), s = Math.sin(-alpha);
+      const ez = e0.y * s + e0.z * c;
+      // Past the temple's end (short temple): aim its last point instead.
+      const last = profile.z.length - 1;
+      const hit = templeAt(profile, ez);
+      const ty = hit ? hit.y : profile.y[last];
+      const tz = hit ? ez : profile.z[last];
+      sum += Math.atan2(e0.y, -e0.z) - Math.atan2(ty, -tz);
+      n++;
+    }
+    alpha = sum / n;
   }
   return Math.max(-MAX_PANTOSCOPIC_RAD, Math.min(MAX_PANTOSCOPIC_RAD, alpha));
 }
@@ -340,15 +408,18 @@ export function cachedPantoRad(
   frameId: string,
   frameWidthMm: number,
   templeLengthMm: number,
+  scaleCm?: number,
+  nosePadOffsetMm?: number,
 ): number {
+  const key = `${frameId}|${scaleCm?.toFixed(3) ?? "-"}|${nosePadOffsetMm ?? 0}`;
   if (
-    _pantoCacheKey === frameId &&
+    _pantoCacheKey === key &&
     _pantoCacheAnchors === anchors &&
     _pantoCacheGeom === geom
   ) {
     return _pantoCacheVal;
   }
-  _pantoCacheKey = frameId;
+  _pantoCacheKey = key;
   _pantoCacheAnchors = anchors;
   _pantoCacheGeom = geom;
   _pantoCacheVal = solvePantoscopicPitch({
@@ -356,6 +427,8 @@ export function cachedPantoRad(
     glassesGeom: geom,
     frameWidthMm,
     templeLengthMm,
+    scaleCm,
+    nosePadOffsetMm,
   });
   return _pantoCacheVal;
 }
