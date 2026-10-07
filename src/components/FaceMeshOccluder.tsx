@@ -5,7 +5,7 @@ import { useMemo, useRef } from "react";
 import { BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Quaternion, ShaderMaterial, Vector3, type Group, type Mesh } from "three";
 import { perspectiveFaceDepth } from "@/lib/fitPose";
 import { FACE_TRIANGLES } from "@/lib/faceMesh";
-import { setEarProxy, setPosteriorCap, writeFaceSurface, writeFaceSurfaceMetric } from "@/lib/faceOcclusion";
+import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric } from "@/lib/faceOcclusion";
 import { decomposeHeadMatrix } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -115,12 +115,27 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     const tanHalf = Math.tan(((state.cameraCalib.fovDeg / 2) * Math.PI) / 180);
     // Metric surface (canonical depth through the head matrix) when the
     // matrix is usable; landmark-z surface as the fallback.
-    const ok = decomposeHeadMatrix(transformMatrix, headMatrix.current)
+    const metric = decomposeHeadMatrix(transformMatrix, headMatrix.current);
+    const ok = metric
       ? writeFaceSurfaceMetric(landmarks, headMatrix.current, aspect, tanHalf, inverse.current, positions, vertex.current)
       : writeFaceSurface(landmarks, depth, aspect, inverse.current, positions, vertex.current, tanHalf);
     if (!ok) return;
     attribute.needsUpdate = true;
-    setPosteriorCap(positions, cap.position, cap.scale);
+    if (metric) {
+      // Head-shaped skull proxy fitted to the (tracked) ear anchors.
+      cap.matrixAutoUpdate = false;
+      skullProxyMatrix(
+        state.headAnchors.tragionLHeadCm,
+        state.headAnchors.tragionRHeadCm,
+        headMatrix.current,
+        inverse.current,
+        cap.matrix,
+      );
+      cap.matrixWorldNeedsUpdate = true;
+    } else {
+      cap.matrixAutoUpdate = true;
+      setPosteriorCap(positions, cap.position, cap.scale);
+    }
     setEarProxy(positions, "L", earL.position, earL.scale);
     setEarProxy(positions, "R", earR.position, earR.scale);
 

@@ -128,3 +128,46 @@ export function setPosteriorCap(positions: Float32Array, position: Vector3, scal
     Math.min(positions[l+2], positions[r+2]) - width * 0.5);
   scale.set(width * 0.56, width * 0.72, width * 0.48);
 }
+
+/**
+ * Head (skull) proxy ellipsoid in HEAD-LOCAL cm, fitted to the user's tragion
+ * anchors (tracked per user, see useEarTracking). Covers the back and top of
+ * the head that MediaPipe's face-only mesh lacks (WebAR.rocks ships a head
+ * occluder for this; MediaPipe's own face_effect occludes with the face only).
+ *
+ *  - Front at tragion z + 6 cm: behind the eye corners (z ≈ 3.2) so the face
+ *    and nose stay the face mesh's job and nose pads are never clipped.
+ *  - Back at tragion z − 10 cm: ~19 cm glabella-to-back head length.
+ *  - Top 13 cm above the tragion; half-width 5 mm inside the ear points so a
+ *    temple resting at the ear stays in front of it on the near side.
+ */
+export const SKULL = { frontCm: 6, backCm: 10, upCm: 13, downCm: 8, insetCm: 0.5 } as const;
+export function skullEllipsoidHeadCm(tragionL: Vector3, tragionR: Vector3): {
+  center: Vector3;
+  radii: Vector3;
+} {
+  const ty = (tragionL.y + tragionR.y) / 2;
+  const tz = (tragionL.z + tragionR.z) / 2;
+  const halfW = Math.max(3, Math.min(Math.abs(tragionL.x), Math.abs(tragionR.x)) - SKULL.insetCm);
+  const zFront = tz + SKULL.frontCm, zBack = tz - SKULL.backCm;
+  const yTop = ty + SKULL.upCm, yBottom = ty - SKULL.downCm;
+  return {
+    center: new Vector3((tragionL.x + tragionR.x) / 2, (yTop + yBottom) / 2, (zFront + zBack) / 2),
+    radii: new Vector3(halfW, (yTop - yBottom) / 2, (zFront - zBack) / 2),
+  };
+}
+
+const _flip = new Matrix4().makeScale(-1, 1, 1);
+const _sk = new Matrix4();
+/**
+ * Matrix placing a unit sphere as the skull proxy in anchor-local space:
+ * inverseAnchor · mirror · headMatrix · T(center) · S(radii). Mirroring flips
+ * winding; occluder materials are double-sided.
+ */
+export function skullProxyMatrix(
+  tragionL: Vector3, tragionR: Vector3, headMatrix: Matrix4, inverseAnchor: Matrix4, out: Matrix4,
+): Matrix4 {
+  const { center, radii } = skullEllipsoidHeadCm(tragionL, tragionR);
+  _sk.makeScale(radii.x, radii.y, radii.z).setPosition(center);
+  return out.copy(inverseAnchor).multiply(_flip).multiply(headMatrix).multiply(_sk);
+}
