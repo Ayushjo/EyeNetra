@@ -6,38 +6,70 @@ import { BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Quaternion, Shade
 import { perspectiveFaceDepth } from "@/lib/fitPose";
 import { FACE_TRIANGLES } from "@/lib/faceMesh";
 import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric } from "@/lib/faceOcclusion";
-import { decomposeHeadMatrix } from "@/lib/headAnchors";
+import { decomposeHeadMatrix, earInGlassesSpace } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 /**
- * Soft contact-shadow decal drawn on the face surface: alpha-blended black
- * (NOT multiply — the canvas alpha-composites over the video), darkened by
- * spherical falloffs around the nose-pad contact (anchor origin) and the two
- * hinges. Object space IS anchor-local space, so uniforms are cheap.
+ * Soft contact shadows (alpha-blended black decal — NOT multiply: the canvas
+ * alpha-composites over the video). Drawn on the face mask AND the skull
+ * proxy, in anchor-local space (uToAnchor maps the mesh's object space there:
+ * identity for the face, the skull's placement matrix for the skull):
+ *  - nose pads: soft spots on the nose at ±half the bridge width (distance in
+ *    the frame's x/y; only surfaces near the frame front, so cheeks behind
+ *    are not darkened);
+ *  - temples: a narrow strip along each hinge→ear segment.
+ * Everything is offset slightly downward (light from above).
  */
 const SHADOW_VERT = /* glsl */ `
+  uniform mat4 uToAnchor;
   varying vec3 vPos;
   void main() {
-    vPos = position;
+    vPos = (uToAnchor * vec4(position, 1.0)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 const SHADOW_FRAG = /* glsl */ `
   varying vec3 vPos;
-  uniform vec3 uPoints[3];
-  uniform float uRadius;
-  uniform float uIntensity;
+  uniform vec3 uPads[2];
+  uniform vec3 uTempleA[2];
+  uniform vec3 uTempleB[2];
+  uniform float uPadRadius;
+  uniform float uTempleRadius;
+  uniform float uPadIntensity;
+  uniform float uTempleIntensity;
+  uniform float uPadMinZ;
+  float segDist(vec3 p, vec3 a, vec3 b) {
+    vec3 ab = b - a;
+    float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    return distance(p, a + ab * t);
+  }
   void main() {
     float f = 0.0;
-    for (int i = 0; i < 3; i++) {
-      float d = distance(vPos, uPoints[i]);
-      f += exp(-(d * d) / (uRadius * uRadius));
+    if (vPos.z > uPadMinZ) {
+      for (int i = 0; i < 2; i++) {
+        float d = distance(vPos.xy, uPads[i].xy);
+        f += uPadIntensity * exp(-(d * d) / (uPadRadius * uPadRadius));
+      }
     }
-    float a = clamp(f, 0.0, 1.0) * uIntensity;
+    for (int i = 0; i < 2; i++) {
+      float d = segDist(vPos, uTempleA[i], uTempleB[i]);
+      f += uTempleIntensity * exp(-(d * d) / (uTempleRadius * uTempleRadius));
+    }
+    float a = clamp(f, 0.0, 0.45);
     if (a < 0.004) discard;
     gl_FragColor = vec4(0.0, 0.0, 0.0, a);
   }
 `;
+/** Contact-shadow sizes (cm, converted to anchor units per frame). */
+export const CONTACT_SHADOW = {
+  padRadiusCm: 0.45,
+  templeRadiusCm: 0.35,
+  padIntensity: 0.3,
+  templeIntensity: 0.22,
+  dropCm: 0.25,
+  /** Pads darken only surfaces within this depth behind the frame front. */
+  padDepthCm: 2.5,
+} as const;
 
 /** Face vertices are measured in the raw detection's anchor space, then inherit
  * the filtered glasses anchor. Ear/cap geometry remains an approximation.
@@ -60,24 +92,34 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     g.setIndex(FACE_TRIANGLES);
     return g;
   }, []);
-  const shadowMaterial = useMemo(
-    () =>
+  const skullShadowRef = useRef<Mesh>(null);
+  // Shared contact-point uniforms; each material has its own uToAnchor.
+  const shadowUniforms = useMemo(
+    () => ({
+      uPads: { value: [new Vector3(), new Vector3()] },
+      uTempleA: { value: [new Vector3(), new Vector3()] },
+      uTempleB: { value: [new Vector3(), new Vector3()] },
+      uPadRadius: { value: 0.03 },
+      uTempleRadius: { value: 0.025 },
+      uPadIntensity: { value: CONTACT_SHADOW.padIntensity },
+      uTempleIntensity: { value: CONTACT_SHADOW.templeIntensity },
+      uPadMinZ: { value: -0.2 },
+    }),
+    [],
+  );
+  const [shadowMaterial, skullShadowMaterial] = useMemo(() => {
+    const make = () =>
       new ShaderMaterial({
         vertexShader: SHADOW_VERT,
         fragmentShader: SHADOW_FRAG,
         transparent: true,
         depthWrite: false,
         depthTest: true,
-        uniforms: {
-          uPoints: {
-            value: [new Vector3(0, 0, 0), new Vector3(0.5, 0, 0), new Vector3(-0.5, 0, 0)],
-          },
-          uRadius: { value: 0.09 },
-          uIntensity: { value: 0.25 },
-        },
-      }),
-    [],
-  );
+        side: DoubleSide,
+        uniforms: { ...shadowUniforms, uToAnchor: { value: new Matrix4() } },
+      });
+    return [make(), make()];
+  }, [shadowUniforms]);
 
   // Per-frame hot path: 468 vertex updates; geometry/index buffers are reused.
   // Runs after useFitEngine: same default priority, but the parent
@@ -90,8 +132,9 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     const earL = earLRef.current;
     const earR = earRRef.current;
     const shadow = shadowRef.current;
-    if (!mesh || !cap || !earL || !earR || !shadow) return;
-    mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = false;
+    const skullShadow = skullShadowRef.current;
+    if (!mesh || !cap || !earL || !earR || !shadow || !skullShadow) return;
+    mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = skullShadow.visible = false;
     const anchor = anchorRef.current;
     const state = useTryOnStore.getState();
     const { trackingFrame, hasFace, videoWidth, videoHeight, transformMatrix, renderMode, showOccluder } = state;
@@ -139,20 +182,30 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     setEarProxy(positions, "L", earL.position, earL.scale);
     setEarProxy(positions, "R", earR.position, earR.scale);
 
-    // Shadow falloff points: nose-pad contact (origin) + both hinges.
+    // Contact shadows, in anchor units (cm / rendered scale).
     const sku = state.selectedFrame();
     const geom = state.glassesGeom[sku.id];
-    const pts = shadowMaterial.uniforms.uPoints.value as Vector3[];
-    pts[0].set(0, 0, 0);
-    if (geom) {
-      pts[1].set(geom.hingeLocal.x, geom.hingeLocal.y, geom.hingeLocal.z);
-      pts[2].set(-geom.hingeLocal.x, geom.hingeLocal.y, geom.hingeLocal.z);
-    } else {
-      pts[1].set(0.5, 0, 0);
-      pts[2].set(-0.5, 0, 0);
+    const unit = rawPose.scale > 0 ? rawPose.scale : sku.fit.frameWidthMm / 10;
+    const drop = CONTACT_SHADOW.dropCm / unit;
+    const u = shadowUniforms;
+    u.uPadRadius.value = CONTACT_SHADOW.padRadiusCm / unit;
+    u.uTempleRadius.value = CONTACT_SHADOW.templeRadiusCm / unit;
+    u.uPadMinZ.value = -CONTACT_SHADOW.padDepthCm / unit;
+    const padX = sku.fit.bridgeWidthMm / 20 / unit;
+    u.uPads.value[0].set(padX, -drop, 0);
+    u.uPads.value[1].set(-padX, -drop, 0);
+    const pantoRad = trackingFrame?.pantoRad ?? 0;
+    for (const [i, sgn] of [[0, 1], [1, -1]] as const) {
+      const hinge = geom?.hingeLocal ?? { x: 0.5, y: 0, z: -0.05 };
+      u.uTempleA.value[i].set(sgn * Math.abs(hinge.x), hinge.y - drop, hinge.z);
+      const ear = earInGlassesSpace(state.headAnchors, sgn, unit, pantoRad, sku.fit.nosePadOffsetMm);
+      u.uTempleB.value[i].set(ear.x, ear.y - drop, ear.z);
     }
-    // ~1.2 cm radius in anchor units (width-1 model = frameWidth cm).
-    shadowMaterial.uniforms.uRadius.value = 1.2 / (sku.fit.frameWidthMm / 10);
+    (skullShadowMaterial.uniforms.uToAnchor.value as Matrix4).copy(cap.matrix);
+    skullShadow.matrixAutoUpdate = false;
+    skullShadow.matrix.copy(cap.matrix);
+    skullShadow.matrixWorldNeedsUpdate = true;
+    skullShadow.visible = metric;
 
     mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = true;
   });
@@ -177,6 +230,9 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
       {/* Contact shadow: same face geometry, drawn after the depth mask (5)
           and before the glasses (10). */}
       <mesh ref={shadowRef} geometry={geometry} material={shadowMaterial} visible={false} renderOrder={5} frustumCulled={false} />
+      <mesh ref={skullShadowRef} material={skullShadowMaterial} visible={false} renderOrder={5} frustumCulled={false}>
+        <sphereGeometry args={[1, 32, 24]} />
+      </mesh>
     </>
   );
 }
