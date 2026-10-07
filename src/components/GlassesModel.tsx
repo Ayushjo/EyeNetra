@@ -1,13 +1,15 @@
 "use client";
 
 import { useGLTF } from "@react-three/drei";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box3,
   BufferAttribute,
+  BufferGeometry,
   Color,
   DoubleSide,
   Euler,
+  Float32BufferAttribute,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
@@ -296,9 +298,10 @@ type DeformEntry = {
 type Deform = {
   entries: DeformEntry[];
   /** Mean temple x per 0.02-wide z bin, per side (+x / −x). */
-  binsPos: Map<number, { sum: number; n: number }>;
-  binsNeg: Map<number, { sum: number; n: number }>;
+  binsPos: Map<number, TempleBin>;
+  binsNeg: Map<number, TempleBin>;
 };
+type TempleBin = { sum: number; sumY: number; n: number };
 const TEMPLE_BIN = 0.02;
 
 function templeXAt(deform: Deform, side: 1 | -1, z: number): number | null {
@@ -321,8 +324,8 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
   const hz = geom?.hingeLocal.z ?? -0.05;
   const lensHalf = geom?.lensSpanNorm ? geom.lensSpanNorm / 2 : 0.42;
   const entries: DeformEntry[] = [];
-  const binsPos = new Map<number, { sum: number; n: number }>();
-  const binsNeg = new Map<number, { sum: number; n: number }>();
+  const binsPos = new Map<number, TempleBin>();
+  const binsNeg = new Map<number, TempleBin>();
   const v = new Vector3();
   root.traverse((obj: Object3D) => {
     if (!(obj instanceof Mesh) || !obj.geometry?.getAttribute?.("position")) return;
@@ -344,8 +347,9 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
       if (Math.abs(v.x) > 0.25 && v.z < hz - 0.02) {
         const bins = v.x > 0 ? binsPos : binsNeg;
         const k = Math.floor(-v.z / TEMPLE_BIN);
-        const b = bins.get(k) ?? { sum: 0, n: 0 };
+        const b = bins.get(k) ?? { sum: 0, sumY: 0, n: 0 };
         b.sum += v.x;
+        b.sumY += v.y;
         b.n++;
         bins.set(k, b);
       }
@@ -354,6 +358,70 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
     entries.push({ attr, norm, fromNorm: obj.matrixWorld.clone().invert() });
   });
   return { entries, binsPos, binsNeg };
+}
+
+/** Rotate a temple point about its hinge's vertical axis (smooth over ~0.05 widths). */
+function foldPoint(
+  x: number,
+  z: number,
+  hinge: { x: number; z: number },
+  fold: { pos: number; neg: number },
+): [number, number] {
+  const hz = hinge.z;
+  const t = Math.min(1, Math.max(0, (hz - 0.005 - z) / 0.055));
+  const a = (x > 0 ? fold.pos : fold.neg) * t * t * (3 - 2 * t);
+  const hx = Math.sign(x) * Math.abs(hinge.x);
+  const dx = x - hx, dz = z - hz;
+  const c = Math.cos(a), s = Math.sin(a);
+  return [hx + dx * c + dz * s, hz - dx * s + dz * c];
+}
+
+/**
+ * Head-side occluder that hugs the temples. MediaPipe's face mesh stops at
+ * the temple/hairline, so between the face edge and the ear nothing hid the
+ * far temple on a turn (head-local: hinge x≈7.6 cm vs mesh edge 6.9 cm, live
+ * 7 Oct). Real temples rest ON the side of the head, so model that surface:
+ * a depth-only wall INSET just inside each (folded) temple, from behind the
+ * hinge to the temple end. From the far side it hides the temple like the
+ * skull does; from the near side the temple stays in front of it. Derived
+ * from the frame itself, so it cannot be too narrow (temple leaks) or too
+ * wide (near temple hidden) for a given face/frame — the failure modes of a
+ * generic head proxy (cf. WebAR.rocks occluder.glb, Snap "mask head sides").
+ */
+const WALL_INSET = 0.02; // ~3 mm at a 15 cm frame
+const WALL_HALF_HEIGHT = 0.12; // ~1.8 cm above/below the temple
+export function buildTempleWalls(
+  deform: Deform,
+  hinge: { x: number; z: number },
+  fold: { pos: number; neg: number },
+): BufferGeometry | null {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (const side of [1, -1] as const) {
+    const bins = side > 0 ? deform.binsPos : deform.binsNeg;
+    const keys = [...bins.keys()].sort((a, b) => a - b);
+    const start = Math.floor(-(hinge.z - 0.015) / TEMPLE_BIN);
+    const cols: number[] = [];
+    for (const k of keys) {
+      if (k < start) continue;
+      const b = bins.get(k)!;
+      const z0 = -(k + 0.5) * TEMPLE_BIN;
+      const [x, z] = foldPoint(b.sum / b.n, z0, hinge, fold);
+      const y = b.sumY / b.n;
+      cols.push(pos.length / 3);
+      pos.push(x - side * WALL_INSET, y + WALL_HALF_HEIGHT, z);
+      pos.push(x - side * WALL_INSET, y - WALL_HALF_HEIGHT, z);
+    }
+    for (let i = 0; i + 1 < cols.length; i++) {
+      const a = cols[i], b = cols[i + 1];
+      idx.push(a, a + 1, b + 1, a, b + 1, b);
+    }
+  }
+  if (!idx.length) return null;
+  const g = new BufferGeometry();
+  g.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
 }
 
 function applyTempleFold(
@@ -368,16 +436,7 @@ function applyTempleFold(
       let x = norm[i * 3];
       const y = norm[i * 3 + 1];
       let z = norm[i * 3 + 2];
-      if (Math.abs(x) > 0.25 && z < hz - 0.005) {
-        // Bend smoothly over the first ~0.05 widths behind the hinge.
-        const t = Math.min(1, (hz - 0.005 - z) / 0.055);
-        const a = (x > 0 ? fold.pos : fold.neg) * t * t * (3 - 2 * t);
-        const hx = Math.sign(x) * Math.abs(hinge.x);
-        const dx = x - hx, dz = z - hz;
-        const c = Math.cos(a), s = Math.sin(a);
-        x = hx + dx * c + dz * s;
-        z = hz - dx * s + dz * c;
-      }
+      if (Math.abs(x) > 0.25 && z < hz - 0.005) [x, z] = foldPoint(x, z, hinge, fold);
       v.set(x, y, z).applyMatrix4(fromNorm);
       attr.setXYZ(i, v.x, v.y, v.z);
     }
@@ -438,6 +497,12 @@ export function GlassesModel({
   // Temple fold: aim each temple at the user's ear-rest point. Recomputed only
   // when anchors / calibration / SKU change — positions rewritten on the CPU.
   const headAnchors = useTryOnStore((s) => s.headAnchors);
+  const [walls, setWalls] = useState<BufferGeometry | null>(null);
+  const wallMaterial = useMemo(
+    () => new MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: DoubleSide }),
+    [],
+  );
+  useEffect(() => () => wallMaterial.dispose(), [wallMaterial]);
   const scaleCorrection = useTryOnStore((s) => s.cameraCalib.scaleCorrection);
   useEffect(() => {
     const geom = pivot.geom;
@@ -462,6 +527,10 @@ export function GlassesModel({
       nosePadOffsetMm: fit.nosePadOffsetMm,
     });
     applyTempleFold(deform, geom.hingeLocal, fold);
+    setWalls((prev) => {
+      prev?.dispose();
+      return buildTempleWalls(deform, geom.hingeLocal, fold);
+    });
     console.info(
       `[EyeNetra:fold] ${glbPath} temples +x ${((fold.pos * 180) / Math.PI).toFixed(1)}° −x ${((fold.neg * 180) / Math.PI).toFixed(1)}°`,
     );
@@ -538,7 +607,14 @@ export function GlassesModel({
     return () => owned.forEach(mat => mat.dispose());
   }, [cloned, variant, depthTest, quality, fit.lensMaterialNames]);
 
-  return <primitive object={cloned} />;
+  return (
+    <>
+      <primitive object={cloned} />
+      {walls ? (
+        <mesh geometry={walls} material={wallMaterial} renderOrder={1} frustumCulled={false} />
+      ) : null}
+    </>
+  );
 }
 
 useGLTF.preload("/models/aviator-sunglasses.glb");
