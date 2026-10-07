@@ -31,7 +31,7 @@ describe("solveTempleFold", () => {
   it("clamps to ±20° and is 0 for a degenerate scale", () => {
     const f = solveTempleFold({ ...base, templeXAt: line(3) });
     expect(Math.abs(f.pos)).toBeLessThanOrEqual(MAX_TEMPLE_FOLD_RAD + 1e-9);
-    expect(solveTempleFold({ ...base, scaleCm: 0, templeXAt: line(0.5) })).toEqual({ pos: 0, neg: 0 });
+    expect(solveTempleFold({ ...base, scaleCm: 0, templeXAt: line(0.5) })).toMatchObject({ pos: 0, neg: 0 });
   });
 });
 

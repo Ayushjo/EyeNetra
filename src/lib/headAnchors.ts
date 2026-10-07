@@ -391,25 +391,39 @@ const _fe = new Vector3();
  * otherwise splay past a narrow head (visible outside the silhouette on a
  * turn) or stop short of a wide one.
  *
- * Mapping (matches computePosePerspective): a glasses vertex v sits at head
- * point O + Rx(panto)·M·(s·v), M = diag(−1,1,1) (mirrored video), O = seat +
- * nose-pad standoff. So the ear in glasses space is M·Rx(−panto)·(E − O)/s,
- * and glasses +x is the head's −x side (tragionL, vertex 234).
- *
- * Returns rotation angles about +Y for the +x and −x temples.
+ * Ear position from earInGlassesSpace. Returns rotation angles about +Y for
+ * the +x and −x temples, and the mean ear depth (normalized z) for fading.
  */
-export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: number } {
+/**
+ * Ear-rest point in normalized glasses space for the +x (sgn 1) or −x temple.
+ * Mapping (matches computePosePerspective): a glasses vertex v sits at head
+ * point O + Rx(panto)·M·(s·v), M = diag(−1,1,1), O = seat + nose-pad standoff,
+ * so the ear is M·Rx(−panto)·(E − O)/s. Glasses +x ↔ head −x (tragionL, 234).
+ */
+export function earInGlassesSpace(
+  anchors: HeadAnchors,
+  sgn: 1 | -1,
+  scaleCm: number,
+  pantoRad: number,
+  nosePadOffsetMm = 0,
+): { x: number; y: number; z: number } {
+  const ear = sgn > 0 ? anchors.tragionLHeadCm : anchors.tragionRHeadCm;
+  _fe.copy(ear).sub(anchors.seatHeadCm);
+  _fe.y += EAR_REST_UP_CM;
+  _fe.z -= nosePadOffsetMm / 10;
+  const c = Math.cos(-pantoRad), s = Math.sin(-pantoRad);
+  const y = _fe.y * c - _fe.z * s;
+  const z = _fe.y * s + _fe.z * c;
+  return { x: -_fe.x / scaleCm, y: y / scaleCm, z: z / scaleCm };
+}
+
+export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: number; earZ: number } {
   const { anchors, hinge, templeXAt, scaleCm, pantoRad, nosePadOffsetMm = 0 } = input;
-  if (!(scaleCm > 0)) return { pos: 0, neg: 0 };
+  if (!(scaleCm > 0)) return { pos: 0, neg: 0, earZ: NaN };
+  let earZ = 0;
   const solve = (sgn: 1 | -1) => {
-    const ear = sgn > 0 ? anchors.tragionLHeadCm : anchors.tragionRHeadCm;
-    _fe.copy(ear).sub(anchors.seatHeadCm);
-    _fe.y += EAR_REST_UP_CM;
-    _fe.z -= nosePadOffsetMm / 10;
-    // Undo pantoscopic rotation (about X by −panto), mirror, scale. Only x/z
-    // matter for a fold about the vertical hinge axis.
-    const z = _fe.y * Math.sin(-pantoRad) + _fe.z * Math.cos(-pantoRad);
-    const ex = -_fe.x / scaleCm, ez = z / scaleCm;
+    const { x: ex, z: ez } = earInGlassesSpace(anchors, sgn, scaleCm, pantoRad, nosePadOffsetMm);
+    earZ += ez / 2;
     const hx = sgn * Math.abs(hinge.x);
     const tx = templeXAt(sgn, ez);
     if (tx == null || !(ez < hinge.z - 0.05)) return 0;
@@ -417,5 +431,7 @@ export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: num
     const have = Math.atan2(-(tx - hx), -(ez - hinge.z));
     return Math.max(-MAX_TEMPLE_FOLD_RAD, Math.min(MAX_TEMPLE_FOLD_RAD, want - have));
   };
-  return { pos: solve(1), neg: solve(-1) };
+  const pos = solve(1);
+  const neg = solve(-1);
+  return { pos, neg, earZ };
 }

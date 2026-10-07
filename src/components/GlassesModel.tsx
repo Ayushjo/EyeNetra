@@ -15,6 +15,7 @@ import {
   MeshBasicMaterial,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
+  Vector2,
   Vector3,
   type Group,
   type Object3D,
@@ -333,6 +334,7 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
     const attr = obj.geometry.getAttribute("position") as BufferAttribute;
     const norm = new Float32Array(attr.count * 3);
     const front = new Float32Array(attr.count);
+    const templeZ = new Float32Array(attr.count);
     for (let i = 0; i < attr.count; i++) {
       v.fromBufferAttribute(attr, i).applyMatrix4(obj.matrixWorld);
       v.toArray(norm, i * 3);
@@ -344,6 +346,9 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
       const wz = Math.min(1, Math.max(0, (v.z + 0.07) / 0.04));
       const wx = Math.min(1, Math.max(0, (lensHalf + 0.04 - Math.abs(v.x)) / 0.04));
       front[i] = wz * wx;
+      // Pre-fold depth of temple vertices for the behind-the-ear fade (10 =
+      // not a temple → never faded).
+      templeZ[i] = Math.abs(v.x) > 0.25 && v.z < hz - 0.02 ? v.z : 10;
       if (Math.abs(v.x) > 0.25 && v.z < hz - 0.02) {
         const bins = v.x > 0 ? binsPos : binsNeg;
         const k = Math.floor(-v.z / TEMPLE_BIN);
@@ -355,6 +360,7 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
       }
     }
     obj.geometry.setAttribute("aFront", new BufferAttribute(front, 1));
+    obj.geometry.setAttribute("aTempleZ", new BufferAttribute(templeZ, 1));
     entries.push({ attr, norm, fromNorm: obj.matrixWorld.clone().invert() });
   });
   return { entries, binsPos, binsNeg };
@@ -444,13 +450,38 @@ function applyTempleFold(
   }
 }
 
-function installDepthPull(mat: MeshStandardMaterial | MeshPhysicalMaterial) {
+/**
+ * Behind-the-ear temple fade (Jeeliz/WebAR.rocks do the same: their shaders
+ * smoothstep temple alpha by model-space z, e.g. WebAR.rocks VTOGlasses
+ * branchFadingZ −0.9 / transition 0.6). The ear is not tracked, so the tip
+ * is always a guess; fading it reads better than a visibly wrong tip.
+ * uFade = (start, end) in normalized glasses z, set from the solved ear depth.
+ */
+export const TEMPLE_FADE_BEFORE_EAR = 0.02; // ~3 mm in front of the ear point
+export const TEMPLE_FADE_AFTER_EAR = 0.07; // gone ~1 cm behind it
+export type GlassesUniforms = { uFade: { value: Vector2 } };
+
+function installDepthPull(
+  mat: MeshStandardMaterial | MeshPhysicalMaterial,
+  shared: GlassesUniforms,
+) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uDepthPull = { value: FRONT_DEPTH_PULL_CM };
+    shader.uniforms.uFade = shared.uFade;
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vTempleFade;")
+      .replace(
+        "#include <dithering_fragment>",
+        "#include <dithering_fragment>\ngl_FragColor.a *= vTempleFade;",
+      );
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
-        "#include <common>\nattribute float aFront;\nuniform float uDepthPull;",
+        "#include <common>\nattribute float aFront;\nattribute float aTempleZ;\nuniform float uDepthPull;\nuniform vec2 uFade;\nvarying float vTempleFade;",
+      )
+      .replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\nvTempleFade = aTempleZ > 5.0 ? 1.0 : smoothstep(uFade.y, uFade.x, aTempleZ);",
       )
       .replace(
         "#include <project_vertex>",
@@ -497,6 +528,10 @@ export function GlassesModel({
   // Temple fold: aim each temple at the user's ear-rest point. Recomputed only
   // when anchors / calibration / SKU change — positions rewritten on the CPU.
   const headAnchors = useTryOnStore((s) => s.headAnchors);
+  const glassesUniforms = useMemo<GlassesUniforms>(
+    () => ({ uFade: { value: new Vector2(-10, -11) } }),
+    [],
+  );
   const [walls, setWalls] = useState<BufferGeometry | null>(null);
   const wallMaterial = useMemo(
     () => new MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: DoubleSide }),
@@ -527,6 +562,12 @@ export function GlassesModel({
       nosePadOffsetMm: fit.nosePadOffsetMm,
     });
     applyTempleFold(deform, geom.hingeLocal, fold);
+    if (Number.isFinite(fold.earZ)) {
+      glassesUniforms.uFade.value.set(
+        fold.earZ + TEMPLE_FADE_BEFORE_EAR,
+        fold.earZ - TEMPLE_FADE_AFTER_EAR,
+      );
+    }
     setWalls((prev) => {
       prev?.dispose();
       return buildTempleWalls(deform, geom.hingeLocal, fold);
@@ -563,10 +604,12 @@ export function GlassesModel({
       obj.frustumCulled = false;
 
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      let meshHasLens = false;
       mats.forEach((mat, i) => {
         const lens = fit.lensMaterialNames
           ? fit.lensMaterialNames.includes(mat.name)
           : isLensName(mat.name || name);
+        if (lens) meshHasLens = true;
         const usePhysical = lens;
         let next: MeshStandardMaterial | MeshPhysicalMaterial;
         if (usePhysical) {
@@ -598,11 +641,19 @@ export function GlassesModel({
           next.depthWrite = depthTest;
           next.depthTest = depthTest;
         } else if (!keepTransparent) applyVariant(next, lens, variant, depthTest, quality);
-        installDepthPull(next);
+        installDepthPull(next, glassesUniforms);
+        // Frame finish is opaque but drawn in the transparent pass so the
+        // temple fade can blend; drawn before the lens (renderOrder 9 < 10).
+        if (!lens && !keepTransparent) {
+          next.transparent = true;
+          next.depthWrite = depthTest;
+        }
         owned.push(next);
         if (Array.isArray(obj.material)) obj.material[i] = next;
         else obj.material = next;
       });
+      // Frame meshes before lens meshes (both in the transparent pass).
+      obj.renderOrder = meshHasLens ? 10 : 9;
     });
     return () => owned.forEach(mat => mat.dispose());
   }, [cloned, variant, depthTest, quality, fit.lensMaterialNames]);
