@@ -5,6 +5,7 @@ import { Matrix4, Vector3 } from "three";
 import { CANONICAL_CM, canonicalTragion } from "@/lib/canonicalFace";
 import { earRay, sideVisible, triangulateWithPrior, type EarRay } from "@/lib/earTracking";
 import { decomposeHeadMatrix } from "@/lib/headAnchors";
+import { PersonSwitchDetector } from "@/lib/personSwitch";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 const SAMPLE_EVERY_MS = 100;
@@ -35,6 +36,7 @@ export function useEarTracking(enabled: boolean) {
     const head = new Matrix4();
     let lastTs = -Infinity;
     let lastSolve = 0;
+    const person = new PersonSwitchDetector();
 
     const id = setInterval(() => {
       const state = useTryOnStore.getState();
@@ -42,6 +44,10 @@ export function useEarTracking(enabled: boolean) {
       if (!tf?.hasFace || !tf.landmarks || !tf.transformMatrix) return;
       if (tf.timestampMs == null || tf.timestampMs <= lastTs) return;
       lastTs = tf.timestampMs;
+      if (person.update(tf.transformMatrix)) {
+        rays[234] = [];
+        rays[454] = [];
+      }
       if (!decomposeHeadMatrix(tf.transformMatrix, head)) return;
       const aspect = tf.videoWidth / tf.videoHeight;
       const tanHalf = Math.tan(((state.cameraCalib.fovDeg / 2) * Math.PI) / 180);

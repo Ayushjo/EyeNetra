@@ -10,6 +10,7 @@ import {
 } from "@/lib/faceProfile";
 import { outerEyeSpanScene } from "@/lib/fitPose";
 import { isFrontalHeadPose, type AnchorSample } from "@/lib/headAnchors";
+import { PersonSwitchDetector } from "@/lib/personSwitch";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 /** Samples needed before a measurement is trusted. */
@@ -79,9 +80,17 @@ export function useAutoFitCalibration(enabled: boolean) {
     measures.current = [];
     samples.current = [];
     lastTs.current = -Infinity;
+    const person = new PersonSwitchDetector();
     const id = setInterval(() => {
       const state = useTryOnStore.getState();
       const tf = state.trackingFrame;
+      // Another person in frame: start this person's measurement afresh.
+      if (tf?.hasFace && person.update(tf.transformMatrix)) {
+        measures.current = [];
+        samples.current = [];
+        bestSigma.current = Infinity;
+        state.setAutoCalib({ n: 0, sigmaMm: null, applied: false, reject: null });
+      }
       const verdict = evaluateAutoCalibSample(tf, lastTs.current);
       if (typeof verdict === "string" || verdict === null) {
         if (verdict && verdict !== "stale") state.setAutoCalib({ ...state.autoCalib, reject: verdict });
