@@ -69,16 +69,14 @@ export function useEarTracking(enabled: boolean) {
       const pR = new Vector3(...(CANONICAL_CM[454] as [number, number, number]));
       const halfW = (triangulateWithPrior(rays[454], pR).x - triangulateWithPrior(rays[234], pL).x) / 2;
       const delta = Math.max(-MAX_WIDTH_DELTA_CM, Math.min(MAX_WIDTH_DELTA_CM, halfW - (pR.x - pL.x) / 2));
+      // Keep calibrated y/z; set x from the canonical tragion + width delta.
+      // Both sides move together so the anchors stay symmetric in width.
       const next = { ...anchors };
       let moved = false;
       for (const { key, tragion, side } of SIDES) {
         const base = canonicalTragion(tragion, state.tragionTune);
-        // Keep calibrated y/z; set x from the canonical tragion + width delta.
-        const target = anchors[key].clone().setX(base.x + side * delta);
-        if (Math.abs(target.x - anchors[key].x) > UPDATE_THRESHOLD_CM) {
-          next[key] = target;
-          moved = true;
-        }
+        next[key] = anchors[key].clone().setX(base.x + side * delta);
+        if (Math.abs(next[key].x - anchors[key].x) > UPDATE_THRESHOLD_CM) moved = true;
       }
       if (moved) {
         state.setHeadAnchors(next);
