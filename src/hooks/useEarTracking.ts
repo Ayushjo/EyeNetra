@@ -14,8 +14,8 @@ const WINDOW = 150;
 const MIN_RAYS = 20;
 /** Only republish anchors when a tragion moved this much (cm). */
 const UPDATE_THRESHOLD_CM = 0.2;
-/** The junction cannot be further than this from the canonical vertex (cm). */
-const MAX_DELTA_CM = 1.5;
+/** Half-width correction cap (cm) vs the canonical 234↔454 half-width. */
+const MAX_WIDTH_DELTA_CM = 1.0;
 
 const SIDES = [
   { idx: 234, side: -1 as const, key: "tragionLHeadCm" as const, tragion: "L" as const },
@@ -23,10 +23,10 @@ const SIDES = [
 ];
 
 /**
- * Track the user's ear junctions (234/454) by multi-view triangulation over
- * the live stream (see lib/earTracking) and move the tragion anchors with
- * them, so temple fold / tilt / fade aim at THIS user's ears rather than a
- * one-off estimate. Head turns are what make the ear's depth observable.
+ * Track the user's ear-junction WIDTH (234↔454) by multi-view triangulation
+ * over the live stream (see lib/earTracking) and set the tragion anchors' x
+ * from it, so the temples aim at THIS user's head width. Only the symmetric
+ * width is applied — see the live-data note in the solve below.
  */
 export function useEarTracking(enabled: boolean) {
   useEffect(() => {
@@ -55,16 +55,27 @@ export function useEarTracking(enabled: boolean) {
       const now = performance.now();
       if (now - lastSolve < SOLVE_EVERY_MS) return;
       lastSolve = now;
+      // Live data (7 Oct) showed what is and isn't trustworthy here:
+      //  - DEPTH: the triangulated junction ran ≥1.5 cm forward of canonical and
+      //    sat on the clamp — 234/454 lie on the face contour, so they slide
+      //    with the view instead of being a fixed point. Not used.
+      //  - COMMON-MODE X: both sides moved ~+0.5 cm together (head-matrix
+      //    offset, not anatomy), which made the temple folds lopsided.
+      // What survives is the symmetric HALF-WIDTH (R.x − L.x)/2, so only
+      // that is applied, equally to both sides.
+      if (rays[234].length < MIN_RAYS || rays[454].length < MIN_RAYS) return;
       const anchors = state.headAnchors;
+      const pL = new Vector3(...(CANONICAL_CM[234] as [number, number, number]));
+      const pR = new Vector3(...(CANONICAL_CM[454] as [number, number, number]));
+      const halfW = (triangulateWithPrior(rays[454], pR).x - triangulateWithPrior(rays[234], pL).x) / 2;
+      const delta = Math.max(-MAX_WIDTH_DELTA_CM, Math.min(MAX_WIDTH_DELTA_CM, halfW - (pR.x - pL.x) / 2));
       const next = { ...anchors };
       let moved = false;
-      for (const { idx, key, tragion } of SIDES) {
-        if (rays[idx].length < MIN_RAYS) continue;
-        const prior = new Vector3(...(CANONICAL_CM[idx] as [number, number, number]));
-        const delta = triangulateWithPrior(rays[idx], prior).sub(prior);
-        delta.clampScalar(-MAX_DELTA_CM, MAX_DELTA_CM);
-        const target = canonicalTragion(tragion, state.tragionTune).add(delta);
-        if (target.distanceTo(anchors[key]) > UPDATE_THRESHOLD_CM) {
+      for (const { key, tragion, side } of SIDES) {
+        const base = canonicalTragion(tragion, state.tragionTune);
+        // Keep calibrated y/z; set x from the canonical tragion + width delta.
+        const target = anchors[key].clone().setX(base.x + side * delta);
+        if (Math.abs(target.x - anchors[key].x) > UPDATE_THRESHOLD_CM) {
           next[key] = target;
           moved = true;
         }
