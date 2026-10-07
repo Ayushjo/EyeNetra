@@ -4,9 +4,11 @@ import { useGLTF } from "@react-three/drei";
 import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
+  BufferAttribute,
   Color,
   DoubleSide,
   Euler,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshPhysicalMaterial,
@@ -16,7 +18,12 @@ import {
   type Object3D,
 } from "three";
 import type { FrameSku, FrameVariant } from "@/data/frames";
-import type { GlassesGeom } from "@/lib/headAnchors";
+import {
+  solvePantoscopicPitch,
+  solveTempleFold,
+  type GlassesGeom,
+} from "@/lib/headAnchors";
+import { useTryOnStore } from "@/store/tryOnStore";
 
 function isLensName(name: string): boolean {
   const n = name.toLowerCase();
@@ -239,6 +246,7 @@ function normalizeGlasses(
     root.updateMatrixWorld(true);
     // Express hinge relative to the new (contact-point) origin.
     geom = {
+      ...geom,
       bridgeLocal: { x: 0, y: 0, z: 0 },
       hingeLocal: {
         x: geom.hingeLocal.x - geom.bridgeLocal.x,
@@ -268,6 +276,132 @@ function normalizeGlasses(
   return debug;
 }
 
+/**
+ * Front-of-frame depth pull (cm, view space). Lenses and rims are moved this
+ * far toward the camera ALONG THE VIEW RAY in the depth test only — the
+ * projected pixel is unchanged. A lens physically cannot be inside the face,
+ * but the generic canonical mask is wider/flatter than many faces, so its
+ * cheeks and nose sides clipped lens edges (live 7 Oct). Only a face part
+ * more than this far in front (the nose bridge over the far lens in a
+ * profile turn) still hides the front. Temples fade to 0 pull ~1 cm behind
+ * the hinge so they keep tucking behind the head.
+ */
+export const FRONT_DEPTH_PULL_CM = 1.2;
+
+type DeformEntry = {
+  attr: BufferAttribute;
+  norm: Float32Array;
+  fromNorm: Matrix4;
+};
+type Deform = {
+  entries: DeformEntry[];
+  /** Mean temple x per 0.02-wide z bin, per side (+x / −x). */
+  binsPos: Map<number, { sum: number; n: number }>;
+  binsNeg: Map<number, { sum: number; n: number }>;
+};
+const TEMPLE_BIN = 0.02;
+
+function templeXAt(deform: Deform, side: 1 | -1, z: number): number | null {
+  const bins = side > 0 ? deform.binsPos : deform.binsNeg;
+  const k = Math.floor(-z / TEMPLE_BIN);
+  for (const d of [0, -1, 1, -2, 2]) {
+    const b = bins.get(k + d);
+    if (b && b.n > 0) return b.sum / b.n;
+  }
+  return null;
+}
+
+/**
+ * Per-mesh private geometry (the GLTF cache is shared across instances),
+ * normalized-space vertex copies for the temple fold, and the aFront weight
+ * attribute for the depth pull.
+ */
+function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
+  root.updateMatrixWorld(true);
+  const hz = geom?.hingeLocal.z ?? -0.05;
+  const entries: DeformEntry[] = [];
+  const binsPos = new Map<number, { sum: number; n: number }>();
+  const binsNeg = new Map<number, { sum: number; n: number }>();
+  const v = new Vector3();
+  root.traverse((obj: Object3D) => {
+    if (!(obj instanceof Mesh) || !obj.geometry?.getAttribute?.("position")) return;
+    obj.geometry = obj.geometry.clone();
+    const attr = obj.geometry.getAttribute("position") as BufferAttribute;
+    const norm = new Float32Array(attr.count * 3);
+    const front = new Float32Array(attr.count);
+    for (let i = 0; i < attr.count; i++) {
+      v.fromBufferAttribute(attr, i).applyMatrix4(obj.matrixWorld);
+      v.toArray(norm, i * 3);
+      front[i] = Math.min(1, Math.max(0, (v.z - (hz - 0.09)) / 0.07));
+      if (Math.abs(v.x) > 0.25 && v.z < hz - 0.02) {
+        const bins = v.x > 0 ? binsPos : binsNeg;
+        const k = Math.floor(-v.z / TEMPLE_BIN);
+        const b = bins.get(k) ?? { sum: 0, n: 0 };
+        b.sum += v.x;
+        b.n++;
+        bins.set(k, b);
+      }
+    }
+    obj.geometry.setAttribute("aFront", new BufferAttribute(front, 1));
+    entries.push({ attr, norm, fromNorm: obj.matrixWorld.clone().invert() });
+  });
+  return { entries, binsPos, binsNeg };
+}
+
+function applyTempleFold(
+  deform: Deform,
+  hinge: { x: number; z: number },
+  fold: { pos: number; neg: number },
+) {
+  const v = new Vector3();
+  const hz = hinge.z;
+  for (const { attr, norm, fromNorm } of deform.entries) {
+    for (let i = 0; i < attr.count; i++) {
+      let x = norm[i * 3];
+      const y = norm[i * 3 + 1];
+      let z = norm[i * 3 + 2];
+      if (Math.abs(x) > 0.25 && z < hz - 0.005) {
+        // Bend smoothly over the first ~0.05 widths behind the hinge.
+        const t = Math.min(1, (hz - 0.005 - z) / 0.055);
+        const a = (x > 0 ? fold.pos : fold.neg) * t * t * (3 - 2 * t);
+        const hx = Math.sign(x) * Math.abs(hinge.x);
+        const dx = x - hx, dz = z - hz;
+        const c = Math.cos(a), s = Math.sin(a);
+        x = hx + dx * c + dz * s;
+        z = hz - dx * s + dz * c;
+      }
+      v.set(x, y, z).applyMatrix4(fromNorm);
+      attr.setXYZ(i, v.x, v.y, v.z);
+    }
+    attr.needsUpdate = true;
+  }
+}
+
+function installDepthPull(mat: MeshStandardMaterial | MeshPhysicalMaterial) {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uDepthPull = { value: FRONT_DEPTH_PULL_CM };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nattribute float aFront;\nuniform float uDepthPull;",
+      )
+      .replace(
+        "#include <project_vertex>",
+        `#include <project_vertex>
+        {
+          float eyeDist = length(mvPosition.xyz);
+          if (eyeDist > 1e-3 && aFront > 0.0) {
+            vec4 pulled = vec4(mvPosition.xyz * max(0.05, 1.0 - uDepthPull * aFront / eyeDist), 1.0);
+            vec4 clip = projectionMatrix * pulled;
+            gl_Position.z = clip.z / clip.w * gl_Position.w;
+          }
+        }`,
+      );
+  };
+  mat.customProgramCacheKey = () => "eyenetra-depth-pull";
+  mat.needsUpdate = true;
+}
+
 export function GlassesModel({
   glbPath,
   variant,
@@ -287,11 +421,43 @@ export function GlassesModel({
   // (Full face-oval occluder is gone — it culled temples at the hinges.)
   const logged = useRef(false);
 
-  const { cloned, pivot } = useMemo(() => {
+  const { cloned, pivot, deform } = useMemo(() => {
     const root = scene.clone(true) as Group;
     const pivotInfo = normalizeGlasses(root, fit);
-    return { cloned: root, pivot: pivotInfo };
+    return { cloned: root, pivot: pivotInfo, deform: prepareDeform(root, pivotInfo.geom) };
   }, [scene, fit]);
+
+  // Temple fold: aim each temple at the user's ear-rest point. Recomputed only
+  // when anchors / calibration / SKU change — positions rewritten on the CPU.
+  const headAnchors = useTryOnStore((s) => s.headAnchors);
+  const scaleCorrection = useTryOnStore((s) => s.cameraCalib.scaleCorrection);
+  useEffect(() => {
+    const geom = pivot.geom;
+    if (!geom || !deform.binsPos.size || !deform.binsNeg.size) return;
+    const widthMm =
+      fit.lensSpanMm && geom.lensSpanNorm && geom.lensSpanNorm > 0.2
+        ? fit.lensSpanMm / geom.lensSpanNorm
+        : fit.frameWidthMm;
+    const scaleCm = (widthMm / 10) * (scaleCorrection || 1) * (fit.perspScaleTune ?? 1);
+    const pantoRad = solvePantoscopicPitch({
+      anchors: headAnchors,
+      glassesGeom: geom,
+      frameWidthMm: fit.frameWidthMm,
+      templeLengthMm: fit.templeLengthMm,
+    });
+    const fold = solveTempleFold({
+      anchors: headAnchors,
+      hinge: geom.hingeLocal,
+      templeXAt: (side, z) => templeXAt(deform, side, z),
+      scaleCm,
+      pantoRad,
+      nosePadOffsetMm: fit.nosePadOffsetMm,
+    });
+    applyTempleFold(deform, geom.hingeLocal, fold);
+    console.info(
+      `[EyeNetra:fold] ${glbPath} temples +x ${((fold.pos * 180) / Math.PI).toFixed(1)}° −x ${((fold.neg * 180) / Math.PI).toFixed(1)}°`,
+    );
+  }, [deform, pivot, fit, headAnchors, scaleCorrection, glbPath]);
 
   useEffect(() => {
     onPivotDebug?.(pivot);
@@ -355,6 +521,7 @@ export function GlassesModel({
           next.depthWrite = depthTest;
           next.depthTest = depthTest;
         } else if (!keepTransparent) applyVariant(next, lens, variant, depthTest, quality);
+        installDepthPull(next);
         owned.push(next);
         if (Array.isArray(obj.material)) obj.material[i] = next;
         else obj.material = next;

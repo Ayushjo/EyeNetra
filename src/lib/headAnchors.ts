@@ -363,3 +363,59 @@ export function cachedPantoRad(
 export function pantoscopicQuaternion(alphaRad: number): Quaternion {
   return new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), alphaRad);
 }
+
+/** Largest temple fold (rad) — real hinges/temples flex ~±20° at most. */
+export const MAX_TEMPLE_FOLD_RAD = (20 * Math.PI) / 180;
+
+export type TempleFoldInput = {
+  anchors: HeadAnchors;
+  /** Right-side hinge in normalized glasses space (|x| used for both sides). */
+  hinge: { x: number; y: number; z: number };
+  /**
+   * Authored temple x at a given normalized z (for the +x / −x temple), or
+   * null past its end. Aiming uses the temple AT THE EAR'S DEPTH, not its
+   * tip: cable/hooked tips curl inward behind the ear, and aiming the tip
+   * swung the straight arm outward (live 7 Oct: arms ended in the air).
+   */
+  templeXAt: (side: 1 | -1, z: number) => number | null;
+  /** cm per normalized glasses unit (render scale). */
+  scaleCm: number;
+  pantoRad: number;
+  nosePadOffsetMm?: number;
+};
+
+const _fe = new Vector3();
+/**
+ * Fold each temple about its hinge's vertical axis so it aims at the ear-rest
+ * point, as a real temple flexes in to touch the head. Rigid GLB temples
+ * otherwise splay past a narrow head (visible outside the silhouette on a
+ * turn) or stop short of a wide one.
+ *
+ * Mapping (matches computePosePerspective): a glasses vertex v sits at head
+ * point O + Rx(panto)·M·(s·v), M = diag(−1,1,1) (mirrored video), O = seat +
+ * nose-pad standoff. So the ear in glasses space is M·Rx(−panto)·(E − O)/s,
+ * and glasses +x is the head's −x side (tragionL, vertex 234).
+ *
+ * Returns rotation angles about +Y for the +x and −x temples.
+ */
+export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: number } {
+  const { anchors, hinge, templeXAt, scaleCm, pantoRad, nosePadOffsetMm = 0 } = input;
+  if (!(scaleCm > 0)) return { pos: 0, neg: 0 };
+  const solve = (sgn: 1 | -1) => {
+    const ear = sgn > 0 ? anchors.tragionLHeadCm : anchors.tragionRHeadCm;
+    _fe.copy(ear).sub(anchors.seatHeadCm);
+    _fe.y += EAR_REST_UP_CM;
+    _fe.z -= nosePadOffsetMm / 10;
+    // Undo pantoscopic rotation (about X by −panto), mirror, scale. Only x/z
+    // matter for a fold about the vertical hinge axis.
+    const z = _fe.y * Math.sin(-pantoRad) + _fe.z * Math.cos(-pantoRad);
+    const ex = -_fe.x / scaleCm, ez = z / scaleCm;
+    const hx = sgn * Math.abs(hinge.x);
+    const tx = templeXAt(sgn, ez);
+    if (tx == null || !(ez < hinge.z - 0.05)) return 0;
+    const want = Math.atan2(-(ex - hx), -(ez - hinge.z));
+    const have = Math.atan2(-(tx - hx), -(ez - hinge.z));
+    return Math.max(-MAX_TEMPLE_FOLD_RAD, Math.min(MAX_TEMPLE_FOLD_RAD, want - have));
+  };
+  return { pos: solve(1), neg: solve(-1) };
+}
