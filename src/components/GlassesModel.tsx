@@ -346,7 +346,15 @@ export function GlassesModel({
         // material_2 z[0.00..0.48]). Everything else gets the frame finish.
         const keepTransparent =
           !lens && mat.transparent && /transparent|pad|nose/i.test(mat.name || name);
-        if (!keepTransparent) applyVariant(next, lens, variant, depthTest, quality);
+        // Hardware (hinges, rivets, metal temple tips) authored with
+        // extras.keepAuthored keeps its own finish instead of the variant tint.
+        const keepAuthored = !lens && Boolean(mat.userData?.keepAuthored);
+        if (keepAuthored) {
+          next.side = DoubleSide;
+          next.envMapIntensity = quality === "capture" ? 1.1 : 0.6;
+          next.depthWrite = depthTest;
+          next.depthTest = depthTest;
+        } else if (!keepTransparent) applyVariant(next, lens, variant, depthTest, quality);
         owned.push(next);
         if (Array.isArray(obj.material)) obj.material[i] = next;
         else obj.material = next;

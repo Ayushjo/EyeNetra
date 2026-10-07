@@ -1,3 +1,5 @@
+import { REAL_FRAMES } from "./realFrames.generated";
+
 export type FrameVariant = {
   id: string;
   name: string;
@@ -238,6 +240,8 @@ export const FRAMES: FrameSku[] = [
       },
     ],
   },
+  // Realistic everyday styles (scripts/generate-real-frames.mjs).
+  ...REAL_FRAMES,
   {
     id: "p-round-s",
     name: "Param Round S",
