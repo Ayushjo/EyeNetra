@@ -283,8 +283,8 @@ function normalizeGlasses(
  * but the generic canonical mask is wider/flatter than many faces, so its
  * cheeks and nose sides clipped lens edges (live 7 Oct). Only a face part
  * more than this far in front (the nose bridge over the far lens in a
- * profile turn) still hides the front. Temples fade to 0 pull ~1 cm behind
- * the hinge so they keep tucking behind the head.
+ * profile turn) still hides the front. Only the lens footprint is pulled
+ * (see prepareDeform); end pieces, hinges and wrap sides keep true depth.
  */
 export const FRONT_DEPTH_PULL_CM = 1.2;
 
@@ -319,6 +319,7 @@ function templeXAt(deform: Deform, side: 1 | -1, z: number): number | null {
 function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
   root.updateMatrixWorld(true);
   const hz = geom?.hingeLocal.z ?? -0.05;
+  const lensHalf = geom?.lensSpanNorm ? geom.lensSpanNorm / 2 : 0.42;
   const entries: DeformEntry[] = [];
   const binsPos = new Map<number, { sum: number; n: number }>();
   const binsNeg = new Map<number, { sum: number; n: number }>();
@@ -332,7 +333,14 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
     for (let i = 0; i < attr.count; i++) {
       v.fromBufferAttribute(attr, i).applyMatrix4(obj.matrixWorld);
       v.toArray(norm, i * 3);
-      front[i] = Math.min(1, Math.max(0, (v.z - (hz - 0.09)) / 0.07));
+      // Pull only the lens footprint: inside the lens span (fading over
+      // 0.04 widths past it) and within ~1 cm of the front plane. Keying it to
+      // the hinge pulled deep end pieces / wrap sides over the face on turns
+      // (live 7 Oct: far hinge drawn over the eye on Wayfarer/Studio, Sport
+      // wrap never tucked behind the cheek — hinges 2–3 cm back).
+      const wz = Math.min(1, Math.max(0, (v.z + 0.07) / 0.04));
+      const wx = Math.min(1, Math.max(0, (lensHalf + 0.04 - Math.abs(v.x)) / 0.04));
+      front[i] = wz * wx;
       if (Math.abs(v.x) > 0.25 && v.z < hz - 0.02) {
         const bins = v.x > 0 ? binsPos : binsNeg;
         const k = Math.floor(-v.z / TEMPLE_BIN);
