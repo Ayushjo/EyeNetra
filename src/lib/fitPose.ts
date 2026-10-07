@@ -3,7 +3,12 @@ import { LM } from "@/lib/mediapipe/constants";
 import { landmarkToWorld } from "@/lib/coords";
 import type { FaceProfile } from "@/lib/faceProfile";
 import { decomposeHeadMatrix, type HeadAnchors } from "@/lib/headAnchors";
-import { LENS_AHEAD_OF_PUPIL_CM, LENS_CENTER_BELOW_PUPIL_CM } from "@/lib/canonicalFace";
+import {
+  CORNEA_AHEAD_OF_CANTHI_CM,
+  LENS_AHEAD_OF_PUPIL_CM,
+  LENS_CENTER_BELOW_PUPIL_CM,
+} from "@/lib/canonicalFace";
+import { CANONICAL_MESH_CM } from "@/lib/canonicalFaceMesh";
 import { CANONICAL_CM } from "@/lib/canonicalFace";
 import type { LandmarkPoint } from "@/store/tryOnStore";
 
@@ -303,6 +308,26 @@ const _seatWorld = new Vector3();
 const _panto = new Quaternion();
 const _trim = new Vector3();
 
+/** |yaw| range (deg) over which placement hands over to the near eye. */
+export const YAW_BLEND_DEG: [number, number] = [18, 32];
+const _eyeA = new Vector3();
+const _eyeB = new Vector3();
+const _delta = new Vector3();
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+/** Head-local pupil estimate for eye 0 (canthi 33/133, iris 468) or 1 (362/263, iris 473). */
+export function eyeCanonical(which: 0 | 1, out: Vector3): Vector3 {
+  const [i, j] = which === 0 ? [33, 133] : [362, 263];
+  out.set(
+    (CANONICAL_MESH_CM[i * 3] + CANONICAL_MESH_CM[j * 3]) / 2,
+    (CANONICAL_MESH_CM[i * 3 + 1] + CANONICAL_MESH_CM[j * 3 + 1]) / 2,
+    (CANONICAL_MESH_CM[i * 3 + 2] + CANONICAL_MESH_CM[j * 3 + 2]) / 2 + CORNEA_AHEAD_OF_CANTHI_CM,
+  );
+  return out;
+}
+
 export function computePosePerspective(input: PerspectiveInput): FitPose | null {
   const {
     landmarks,
@@ -371,6 +396,30 @@ export function computePosePerspective(input: PerspectiveInput): FitPose | null 
       (0.5 - seatLmY) * 2 * pupilDepth * tanHalf,
       -pupilDepth,
     );
+
+    // Turned head: the far eye is hidden behind the nose and MediaPipe only
+    // guesses its iris, so the two-iris midpoint slides (live 7 Oct: frame
+    // displaced at ~60° yaw). Past ~18° blend to the head-matrix pupil point,
+    // XY-locked to the NEAR iris, which stays visible.
+    _euler.setFromQuaternion(_quatP, "YXZ");
+    const yawW = smoothstep(YAW_BLEND_DEG[0], YAW_BLEND_DEG[1], Math.abs((_euler.y * 180) / Math.PI));
+    if (yawW > 0 && rawPupilDepth > depth * 0.5) {
+      eyeCanonical(0, _eyeA).applyMatrix4(_mp);
+      eyeCanonical(1, _eyeB).applyMatrix4(_mp);
+      const nearA = -_eyeA.z < -_eyeB.z;
+      const eye = nearA ? _eyeA : _eyeB;
+      const iris = nearA ? leftIris : rightIris;
+      const d = -eye.z;
+      // Observed near iris at the predicted eye depth (unmirrored camera space).
+      _delta.set(
+        (iris.x - 0.5) * 2 * d * tanHalf * aspect - eye.x,
+        (0.5 - iris.y) * 2 * d * tanHalf - eye.y,
+        0,
+      );
+      _trim.copy(_seatWorld).add(_delta);
+      _trim.x = -_trim.x; // mirror
+      position.lerp(_trim, yawW);
+    }
 
     // Pupil → lens-centre offset in head space (down, ahead to the lens
     // plane, plus nose-pad standoff and any per-user offset), rotated by the
