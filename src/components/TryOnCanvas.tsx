@@ -212,10 +212,18 @@ function Scene() {
   );
 }
 
+/** Wait this long for the browser to restore a lost context before rebuilding. */
+const CONTEXT_RESTORE_WAIT_MS = 1000;
+
 export function TryOnCanvas({ className = "" }: { className?: string }) {
+  // Bumping the key remounts the Canvas with a fresh WebGL context. A lost
+  // context otherwise leaves the last frame on screen forever (live: glasses
+  // frozen beside the face while tracking kept running).
+  const [canvasKey, setCanvasKey] = useState(0);
   return (
     <div className={`pointer-events-none absolute inset-0 z-20 ${className}`}>
       <Canvas
+        key={canvasKey}
         dpr={[1, 1.5]}
         gl={{
           antialias: true,
@@ -230,11 +238,17 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
           camera.updateProjectionMatrix();
 
           const canvasEl = gl.domElement;
+          let restored = false;
+          canvasEl.addEventListener("webglcontextrestored", () => {
+            restored = true;
+            console.info("[EyeNetra] WebGL context restored by the browser.");
+          });
           canvasEl.addEventListener("webglcontextlost", (e) => {
             e.preventDefault();
-            console.warn(
-              "[EyeNetra] WebGL context lost — reload if glasses disappear.",
-            );
+            console.warn("[EyeNetra] WebGL context lost — rebuilding the 3D view if not restored.");
+            setTimeout(() => {
+              if (!restored) setCanvasKey((k) => k + 1);
+            }, CONTEXT_RESTORE_WAIT_MS);
           });
         }}
         style={{ background: "transparent", width: "100%", height: "100%" }}

@@ -292,6 +292,8 @@ function normalizeGlasses(
 export const FRONT_DEPTH_PULL_CM = 1.2;
 
 type DeformEntry = {
+  /** Private clone of the GLB geometry — must be disposed on unmount. */
+  geometry: BufferGeometry;
   attr: BufferAttribute;
   norm: Float32Array;
   fromNorm: Matrix4;
@@ -361,7 +363,7 @@ function prepareDeform(root: Group, geom: GlassesGeom | null): Deform {
     }
     obj.geometry.setAttribute("aFront", new BufferAttribute(front, 1));
     obj.geometry.setAttribute("aTempleZ", new BufferAttribute(templeZ, 1));
-    entries.push({ attr, norm, fromNorm: obj.matrixWorld.clone().invert() });
+    entries.push({ geometry: obj.geometry, attr, norm, fromNorm: obj.matrixWorld.clone().invert() });
   });
   return { entries, binsPos, binsNeg };
 }
@@ -561,6 +563,12 @@ export function GlassesModel({
     [],
   );
   useEffect(() => () => wallMaterial.dispose(), [wallMaterial]);
+  // Free the per-instance geometry clones on unmount / SKU change. Without
+  // this every frame or colour switch leaked GPU buffers (the voice flow
+  // switches frames constantly) until the browser dropped the WebGL context
+  // and the try-on froze on its last image.
+  useEffect(() => () => deform.entries.forEach((e) => e.geometry.dispose()), [deform]);
+  useEffect(() => () => walls?.dispose(), [walls]);
   const scaleCorrection = useTryOnStore((s) => s.cameraCalib.scaleCorrection);
   useEffect(() => {
     const geom = pivot.geom;
