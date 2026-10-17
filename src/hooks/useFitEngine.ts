@@ -6,6 +6,7 @@ import { Quaternion, Vector3, type Object3D } from "three";
 import { computePose } from "@/lib/fitPose";
 import { OneEuroQuat, OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
 import { predictPose, PREDICT_MAX_MS } from "@/lib/posePredict";
+import { frameSyncActive } from "@/tracking/frameSync";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type { FitPose } from "@/lib/fitPose";
@@ -289,7 +290,9 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     target.quaternion.copy(smoothQuat.current);
     // Post-filter constant-velocity prediction hides pipeline latency.
     // Scaled down as the smoothing slider goes glassy.
-    if (rawT0.current > 0) {
+    // Frame-synchronous display shows the analysed frame itself, so
+    // extrapolating past it would put the glasses ahead of the face.
+    if (rawT0.current > 0 && !frameSyncActive()) {
       const predictMs =
         Math.min(PREDICT_MAX_MS, Math.max(0, nowMs - lastDetectedAt.current)) *
         resp;

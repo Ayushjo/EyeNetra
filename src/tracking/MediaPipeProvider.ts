@@ -1,5 +1,6 @@
 import { getFaceLandmarker } from "@/lib/mediapipe/faceLandmarker";
 import { buildTrackingFrame } from "@/tracking/buildTrackingFrame";
+import { presentFrame } from "@/tracking/frameSync";
 import { useTryOnStore } from "@/store/tryOnStore";
 import type { TrackingFrame, TrackingProvider } from "@/tracking/types";
 
@@ -109,6 +110,8 @@ export class MediaPipeProvider implements TrackingProvider {
         this.timestampMs = Math.max(this.timestampMs + 1, Math.floor(now));
 
         try {
+          // Show exactly the frame the detector analyses (frameSync.ts).
+          presentFrame(v);
           const result = silenceMediapipeConsole(() =>
             landmarker.detectForVideo(v, this.timestampMs),
           );
