@@ -1,10 +1,13 @@
 import { getFaceLandmarker } from "@/lib/mediapipe/faceLandmarker";
 import { buildTrackingFrame } from "@/tracking/buildTrackingFrame";
 import { presentFrame } from "@/tracking/frameSync";
+import { solveHeadPosePnP } from "@/lib/pnp";
 import { useTryOnStore } from "@/store/tryOnStore";
 import type { TrackingFrame, TrackingProvider } from "@/tracking/types";
 
 type VideoFrameMetadata = { mediaTime: number };
+/** PnP solves worse than this (px RMS) fall back to the MediaPipe matrix. */
+const PNP_MAX_RMS_PX = 25;
 
 type VideoWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback: (
@@ -59,6 +62,7 @@ export class MediaPipeProvider implements TrackingProvider {
   private frames = 0;
   private fpsWindowStart = 0;
   private latest: TrackingFrame | null = null;
+  private lastPnpLogMs = 0;
   private onStatus?: (s: "loading" | "ready" | "error", err?: string) => void;
   private onFps?: (fps: number) => void;
 
@@ -120,11 +124,25 @@ export class MediaPipeProvider implements TrackingProvider {
           const landmarks = face
             ? face.map((p) => ({ x: p.x, y: p.y, z: p.z }))
             : null;
-          const transformMatrix = matrix?.data ? [...matrix.data] : null;
+          const mediapipeMatrix = matrix?.data ? [...matrix.data] : null;
           const videoWidth = v.videoWidth || 1280;
           const videoHeight = v.videoHeight || 720;
 
           const store = useTryOnStore.getState();
+          // Head pose by PnP on 33 rigid landmarks under the render camera's
+          // own intrinsics (technique from Meta's try-on; lib/pnp.ts). The
+          // MediaPipe matrix seeds the solve and remains the fallback.
+          let transformMatrix = mediapipeMatrix;
+          if (landmarks && mediapipeMatrix) {
+            const pnp = solveHeadPosePnP(
+              landmarks, mediapipeMatrix, videoWidth, videoHeight, store.cameraCalib.fovDeg,
+            );
+            if (pnp && pnp.rmsPx < PNP_MAX_RMS_PX) transformMatrix = pnp.matrix;
+            if (store.debugPoseLog && pnp && now - this.lastPnpLogMs > 1000) {
+              this.lastPnpLogMs = now;
+              console.info(`[EyeNetra:pnp] rms=${pnp.rmsPx.toFixed(2)}px it=${pnp.iterations}`);
+            }
+          }
           const sku = store.selectedFrame();
           this.latest = buildTrackingFrame({
             landmarks,
