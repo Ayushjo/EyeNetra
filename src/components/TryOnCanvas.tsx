@@ -18,6 +18,7 @@ import {
 } from "three";
 import { GlassesModel, type PivotDebug } from "@/components/GlassesModel";
 import { FaceMeshOccluder } from "@/components/FaceMeshOccluder";
+import { VideoBackground } from "@/components/VideoBackground";
 import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -166,10 +167,12 @@ function Cameras() {
 
 function Scene() {
   const light = useTryOnStore((s) => s.lightEstimate);
+  const renderMode = useTryOnStore((s) => s.renderMode);
   const tint = `rgb(${Math.round(light.color[0] * 255)}, ${Math.round(light.color[1] * 255)}, ${Math.round(light.color[2] * 255)})`;
   return (
     <>
       <Cameras />
+      {renderMode === "perspective" ? <VideoBackground /> : null}
       {/* Key + fill for shape, driven by the video-frame light estimate;
           the Environment supplies realistic reflections. */}
       <ambientLight intensity={light.ambient} color={tint} />

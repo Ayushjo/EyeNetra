@@ -286,6 +286,13 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     // Same sample as last render frame → no filter ingestion; prediction
     // below carries the pose between detections.
 
+    // Frame-synchronous mode applies the raw pose of the displayed frame —
+    // no filter lag, exactly as Meta's try-on (no pose smoothing there).
+    if (frameSyncActive()) {
+      smoothPos.current.set(pos.x, pos.y, pos.z);
+      smoothQuat.current.set(rot.x, rot.y, rot.z, rot.w).normalize();
+      smoothScale.current = scale;
+    }
     target.position.copy(smoothPos.current);
     target.quaternion.copy(smoothQuat.current);
     // Post-filter constant-velocity prediction hides pipeline latency.

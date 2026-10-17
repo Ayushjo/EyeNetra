@@ -10,6 +10,9 @@
 let displayCanvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
 let painted = false;
+/** Increments on every presented frame; the GL background uploads on change. */
+let frameSeq = 0;
+let glBackground = false;
 
 export function setFrameSyncCanvas(canvas: HTMLCanvasElement | null): void {
   displayCanvas = canvas;
@@ -35,4 +38,26 @@ export function presentFrame(video: HTMLVideoElement): void {
   }
   ctx.drawImage(video, 0, 0, w, h);
   painted = true;
+  frameSeq++;
+}
+
+export function getFrameSyncCanvas(): HTMLCanvasElement | null {
+  return painted ? displayCanvas : null;
+}
+
+export function getFrameSeq(): number {
+  return frameSeq;
+}
+
+/**
+ * The 3D renderer draws the frame as its own background (same render pass as
+ * the glasses — Meta's arrangement), so the DOM canvas can hide.
+ */
+export function setGlBackgroundActive(active: boolean): void {
+  glBackground = active;
+  if (displayCanvas) displayCanvas.style.visibility = active ? "hidden" : "visible";
+}
+
+export function glBackgroundActive(): boolean {
+  return glBackground;
 }
