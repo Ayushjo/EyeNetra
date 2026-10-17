@@ -15,7 +15,8 @@ interface WebcamFeedProps {
 export function WebcamFeed({ videoRef, className = "" }: WebcamFeedProps) {
   // Frame-synchronous display: the visible picture is a canvas that the
   // tracker paints with the exact frame it analysed (tracking/frameSync.ts).
-  // The <video> keeps playing underneath as the source, visually hidden.
+  // The <video> keeps playing underneath as the source; the canvas covers it
+  // once painted, and an unpainted (transparent) canvas falls back to it.
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     setFrameSyncCanvas(canvasRef.current);
@@ -25,7 +26,7 @@ export function WebcamFeed({ videoRef, className = "" }: WebcamFeedProps) {
     <div className={`relative ${className}`}>
       <video
         ref={videoRef}
-        className="absolute inset-0 h-full w-full object-fill opacity-0 [-webkit-transform:scaleX(-1)] [transform:scaleX(-1)]"
+        className="absolute inset-0 h-full w-full object-fill [-webkit-transform:scaleX(-1)] [transform:scaleX(-1)]"
         playsInline
         muted
         autoPlay

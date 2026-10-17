@@ -9,15 +9,19 @@
  */
 let displayCanvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
+let painted = false;
 
 export function setFrameSyncCanvas(canvas: HTMLCanvasElement | null): void {
   displayCanvas = canvas;
-  ctx = canvas ? canvas.getContext("2d", { alpha: false, desynchronized: true }) : null;
+  // alpha: true so an unpainted canvas is transparent and the live <video>
+  // underneath stays visible (never a black stage if painting fails).
+  ctx = canvas ? canvas.getContext("2d") : null;
+  painted = false;
 }
 
-/** True when a display canvas is mounted (synced mode active). */
+/** True once the display canvas is actually showing tracked frames. */
 export function frameSyncActive(): boolean {
-  return displayCanvas != null && ctx != null;
+  return displayCanvas != null && ctx != null && painted;
 }
 
 /** Copy the current video frame into the display canvas (same frame the detector sees). */
@@ -30,4 +34,5 @@ export function presentFrame(video: HTMLVideoElement): void {
     displayCanvas.height = h;
   }
   ctx.drawImage(video, 0, 0, w, h);
+  painted = true;
 }
