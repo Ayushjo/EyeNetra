@@ -87,51 +87,23 @@ describe("canonical head anchors", () => {
     expect(anchors.tragionLHeadCm.x).toBeCloseTo(-anchors.tragionRHeadCm.x, 5);
   });
 
-  it("XY image-lock puts the frame on the observed seat ray at seat depth", () => {
-    // Realistic head pose: identity rotation, 45 cm from the camera
-    // (row-major translation column = elements 3, 7, 11).
+  it("pose-locked: the frame sits at the canonical seat mapped through the head matrix", () => {
+    // Identity rotation, 45 cm from the camera (row-major translation).
     const matrix = [1, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1, -45, 0, 0, 0, 1];
-    const landmarks: LandmarkPoint[] = Array.from({ length: 478 }, () => ({
-      x: 0.5,
-      y: 0.5,
-      z: 0,
-    }));
-    landmarks[168] = { x: 0.52, y: 0.47, z: 0 };
-    landmarks[6] = { x: 0.52, y: 0.5, z: 0 };
+    const landmarks: LandmarkPoint[] = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+    // Iris landmarks deliberately off-centre: placement must NOT follow them.
     landmarks[468] = { x: 0.55, y: 0.47, z: 0 };
     landmarks[473] = { x: 0.45, y: 0.47, z: 0 };
-    const aspect = 16 / 9;
     const pose = computePosePerspective({
-      landmarks,
-      transformMatrix: matrix,
-      aspect,
-      frameWidthMm: 140,
-      scaleTune: 1,
-      yOffsetCm: 0,
-      zOffsetCm: 0,
-      headAnchors: anchors,
+      landmarks, transformMatrix: matrix, aspect: 16 / 9, frameWidthMm: 140,
+      scaleTune: 1, yOffsetCm: 0, zOffsetCm: 0, headAnchors: anchors,
     })!;
     expect(pose).not.toBeNull();
-    const seatDepth = -pose.position.z;
-    // Lens plane sits in front of the head origin.
-    expect(seatDepth).toBeGreaterThan(45 - 8);
-    expect(seatDepth).toBeLessThan(45 - 2);
-    // The ray is cast at the PUPIL depth (lens plane minus vertex distance).
-    const pupilDepth = seatDepth + LENS_AHEAD_OF_PUPIL_CM;
-    // Re-project the pose position: it must land on the mirrored observed
-    // pupil-line ray (iris midpoint), dropped by the lens-centre offset
-    // (identity head rotation → straight down in camera space).
-    const tanHalf = Math.tan(((PERSPECTIVE_FOV_DEG / 2) * Math.PI) / 180);
-    const obsX = (0.55 + 0.45) / 2;
-    const obsY = 0.47;
-    expect(pose.position.x).toBeCloseTo(
-      (0.5 - obsX) * 2 * pupilDepth * tanHalf * aspect,
-      6,
-    );
-    expect(pose.position.y).toBeCloseTo(
-      (0.5 - obsY) * 2 * pupilDepth * tanHalf - LENS_CENTER_BELOW_PUPIL_CM,
-      6,
-    );
+    // Seat (head space) + the matrix translation (0, 2, -45); x mirrored.
+    const seat = anchors.seatHeadCm;
+    expect(pose.position.x).toBeCloseTo(-seat.x, 6);
+    expect(pose.position.y).toBeCloseTo(seat.y + 2, 6);
+    expect(pose.position.z).toBeCloseTo(seat.z - 45, 6);
   });
 });
 
@@ -197,16 +169,16 @@ describe("computePosePerspective (anatomical path)", () => {
       source: "calibrated" as const,
     });
 
-    it("calibrated seat X/Y never displaces the frame off the observed landmark ray", () => {
-      // The calibrated seat was measured FROM landmarks 168/6, which the
-      // per-frame ray already tracks — re-applying its XY would double count.
+    it("pose-locked: calibrated seat X/Y moves the frame with it (rigid, head space)", () => {
+      // With POSE_LOCKED_PLACEMENT the seat is the single source of
+      // placement, mapped through the head matrix (x mirrored on screen).
       const a = calibrated();
       const before = computePosePerspective({ ...input, headAnchors: a })!;
       a.seatHeadCm.x += 0.5;
       a.seatHeadCm.y += 0.5;
       const after = computePosePerspective({ ...input, headAnchors: a })!;
-      expect(after.position.x).toBeCloseTo(before.position.x, 6);
-      expect(after.position.y).toBeCloseTo(before.position.y, 6);
+      expect(after.position.x - before.position.x).toBeCloseTo(-0.5, 6);
+      expect(after.position.y - before.position.y).toBeCloseTo(0.5, 6);
     });
 
     it("calibrated seat Z changes the glasses depth", () => {

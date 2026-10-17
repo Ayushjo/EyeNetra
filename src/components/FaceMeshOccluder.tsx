@@ -5,7 +5,8 @@ import { useMemo, useRef } from "react";
 import { BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Quaternion, ShaderMaterial, Vector3, type Group, type Mesh } from "three";
 import { perspectiveFaceDepth } from "@/lib/fitPose";
 import { FACE_TRIANGLES } from "@/lib/faceMesh";
-import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric } from "@/lib/faceOcclusion";
+import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric, writeFaceSurfaceRigid } from "@/lib/faceOcclusion";
+import { POSE_LOCKED_PLACEMENT } from "@/lib/fitPose";
 import { decomposeHeadMatrix, earInGlassesSpace } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -159,7 +160,9 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     // Metric surface (canonical depth through the head matrix) when the
     // matrix is usable; landmark-z surface as the fallback.
     const metric = decomposeHeadMatrix(transformMatrix, headMatrix.current);
-    const ok = metric
+    const ok = metric && POSE_LOCKED_PLACEMENT
+      ? writeFaceSurfaceRigid(headMatrix.current, inverse.current, positions, vertex.current)
+      : metric
       ? writeFaceSurfaceMetric(landmarks, headMatrix.current, aspect, tanHalf, inverse.current, positions, vertex.current)
       : writeFaceSurface(landmarks, depth, aspect, inverse.current, positions, vertex.current, tanHalf);
     if (!ok) return;

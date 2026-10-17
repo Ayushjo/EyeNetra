@@ -66,6 +66,39 @@ const _c = new Vector3();
  *
  * Per-frame hot path: no allocations beyond the caller's buffers.
  */
+/**
+ * Rigid occluder: the whole canonical face mesh through the head matrix —
+ * the same transform that places the glasses (POSE_LOCKED_PLACEMENT). Meta's
+ * try-on uses a static canonical face mesh moved by the pose for exactly this
+ * reason: landmark-driven surfaces drift relative to pose-placed glasses and
+ * cut the lens near the nose. Points are pushed back along their view ray by
+ * `clearanceCm`, mirrored for the selfie view, then put in anchor space.
+ */
+export function writeFaceSurfaceRigid(
+  headMatrix: Matrix4, inverseAnchor: Matrix4, positions: Float32Array, scratch: Vector3,
+  clearanceCm: number = METRIC_CLEARANCE_CM,
+): boolean {
+  if (positions.length < VERTICES * 3) return false;
+  for (let i = 0; i < VERTICES; i++) {
+    _c.fromArray(CANONICAL_MESH_CM, i * 3).applyMatrix4(headMatrix);
+    const d = _c.length();
+    if (!(d > 1) || !(_c.z < 0)) return false;
+    _c.multiplyScalar((d + clearanceCm) / d);
+    scratch.set(-_c.x, _c.y, _c.z).applyMatrix4(inverseAnchor);
+    scratch.toArray(positions, i * 3);
+  }
+  const left = 234 * 3, right = 454 * 3;
+  const centerX = (positions[left] + positions[right]) / 2;
+  const width = Math.abs(positions[left] - positions[right]);
+  if (!(width > 0.01)) return false;
+  for (let i = 0; i < VERTICES; i++) {
+    const x = positions[i * 3] - centerX;
+    const weight = Math.min(1, Math.max(0, (Math.abs(x) / width - 0.25) / 0.2));
+    positions[i * 3] -= Math.sign(x) * width * METRIC_LATERAL_INSET * weight;
+  }
+  return true;
+}
+
 export function writeFaceSurfaceMetric(
   landmarks: LandmarkPoint[], headMatrix: Matrix4, aspect: number, tanHalf: number,
   inverseAnchor: Matrix4, positions: Float32Array, scratch: Vector3,

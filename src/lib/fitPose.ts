@@ -308,6 +308,14 @@ const _seatWorld = new Vector3();
 const _panto = new Quaternion();
 const _trim = new Vector3();
 
+/**
+ * Place the glasses purely by the head matrix (PnP pose) instead of the iris
+ * ray + near-eye blend. Technique from Meta's try-on; requires the PnP pose
+ * (MediaPipeProvider), whose rigid fit keeps the canonical pupils on the
+ * user's pupils within the reprojection residual.
+ */
+export const POSE_LOCKED_PLACEMENT = true;
+
 /** |yaw| range (deg) over which placement hands over to the near eye. */
 export const YAW_BLEND_DEG: [number, number] = [18, 32];
 const _eyeA = new Vector3();
@@ -396,6 +404,12 @@ export function computePosePerspective(input: PerspectiveInput): FitPose | null 
       (0.5 - seatLmY) * 2 * pupilDepth * tanHalf,
       -pupilDepth,
     );
+    if (POSE_LOCKED_PLACEMENT && rawPupilDepth > depth * 0.5) {
+      // Meta's arrangement: the pupil point is simply the canonical seat
+      // through the (PnP) head matrix — the same rigid transform that places
+      // the face occluder, so glasses and face can never slide apart.
+      position.set(-_seatWorld.x, _seatWorld.y, _seatWorld.z);
+    }
 
     // Turned head: the far eye is hidden behind the nose and MediaPipe only
     // guesses its iris, so the two-iris midpoint slides (live 7 Oct: frame
@@ -403,7 +417,7 @@ export function computePosePerspective(input: PerspectiveInput): FitPose | null 
     // XY-locked to the NEAR iris, which stays visible.
     _euler.setFromQuaternion(_quatP, "YXZ");
     const yawW = smoothstep(YAW_BLEND_DEG[0], YAW_BLEND_DEG[1], Math.abs((_euler.y * 180) / Math.PI));
-    if (yawW > 0 && rawPupilDepth > depth * 0.5) {
+    if (!POSE_LOCKED_PLACEMENT && yawW > 0 && rawPupilDepth > depth * 0.5) {
       eyeCanonical(0, _eyeA).applyMatrix4(_mp);
       eyeCanonical(1, _eyeB).applyMatrix4(_mp);
       const nearA = -_eyeA.z < -_eyeB.z;
