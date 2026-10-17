@@ -49,9 +49,15 @@ describe("evaluateAutoCalibSample gates", () => {
     };
     open(159, 145, 468);
     open(386, 374, 473);
-    // …and give the irises a horizontal diameter (outer/inner points).
-    l[469] = { ...l[468], x: l[468].x - 0.01 }; l[471] = { ...l[468], x: l[468].x + 0.01 };
-    l[476] = { ...l[473], x: l[473].x - 0.01 }; l[474] = { ...l[473], x: l[473].x + 0.01 };
+    // …and give each iris a full four-point contour (circle of radius 12 px).
+    const iris = (c: number, ids: number[]) => {
+      const W = f.videoWidth, H = f.videoHeight;
+      const [a, b, d, e] = ids;
+      l[a] = { ...l[c], x: l[c].x - 12 / W }; l[d] = { ...l[c], x: l[c].x + 12 / W };
+      l[b] = { ...l[c], y: l[c].y - 12 / H }; l[e] = { ...l[c], y: l[c].y + 12 / H };
+    };
+    iris(468, [469, 470, 471, 472]);
+    iris(473, [476, 475, 474, 477]);
     const v = evaluateAutoCalibSample({ ...f, landmarks: l }, 0);
     expect(typeof v).toBe("object");
     if (typeof v === "object" && v) {

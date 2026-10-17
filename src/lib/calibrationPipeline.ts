@@ -4,6 +4,7 @@ import {
   saveCameraCalib,
 } from "@/lib/cameraCalib";
 import { saveFaceProfile, type FaceProfile } from "@/lib/faceProfile";
+import { CANONICAL_PD_MM } from "@/lib/canonicalFace";
 import {
   canonicalHeadAnchors,
   clearHeadAnchors,
@@ -20,6 +21,12 @@ import { useTryOnStore } from "@/store/tryOnStore";
  * "Recalibrate" button and the background auto-calibrator so both paths
  * produce identical state.
  */
+/** Canonical PD / user PD, clamped; null if the PD is implausible. */
+export function pdScaleCorrection(ipdMm: number | undefined): number | null {
+  if (!(typeof ipdMm === "number") || !(ipdMm > 45) || !(ipdMm < 80)) return null;
+  return Math.min(1.4, Math.max(0.7, CANONICAL_PD_MM / ipdMm));
+}
+
 export function applyCalibration(
   profile: FaceProfile,
   samples: AnchorSample[],
@@ -52,6 +59,11 @@ export function applyCalibration(
       }
     }
     scaleCorrection = corrN ? Math.min(1.4, Math.max(0.7, corrSum / corrN)) : 1;
+    // Primary: canonical-face PD ÷ user's PD (Meta's scale rule). The PnP
+    // pose fits a canonical-size face, so this ratio is exactly how much a
+    // real frame must grow in that space — no depth or FOV involved.
+    const pdScale = pdScaleCorrection(profile.ipdMm);
+    if (pdScale != null) scaleCorrection = pdScale;
     store.setCameraCalib({ scaleCorrection, rms });
     saveCameraCalib({ fovDeg, scaleCorrection, rms });
     console.info(`[EyeNetra:calib] scaleCorrection=${scaleCorrection.toFixed(3)} (n=${corrN})`);

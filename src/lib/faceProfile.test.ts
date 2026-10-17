@@ -5,6 +5,8 @@ import {
   robustProfileFromMeasures,
   buildProfileFromMeasures,
   measureFacePx,
+  fitIrisCircle,
+  PD_CONVERGENCE_FACTOR,
   pxToMm,
   stableMeasureIndices,
   type FaceMeasurePx,
@@ -20,6 +22,11 @@ describe("face calibration samples", () => {
     landmarks[LM.LEFT_IRIS_INNER] = { x: 300 / width, y: 312 / height, z: 0 };
     landmarks[LM.RIGHT_IRIS_OUTER] = { x: 400 / width, y: 300 / height, z: 0 };
     landmarks[LM.RIGHT_IRIS_INNER] = { x: 400 / width, y: 312 / height, z: 0 };
+    // Full four-point contours (MediaPipe always emits all four).
+    landmarks[470] = { x: 294 / width, y: 306 / height, z: 0 };
+    landmarks[472] = { x: 306 / width, y: 306 / height, z: 0 };
+    landmarks[475] = { x: 394 / width, y: 306 / height, z: 0 };
+    landmarks[477] = { x: 406 / width, y: 306 / height, z: 0 };
     landmarks[LM.LEFT_IRIS] = { x: 300 / width, y: 306 / height, z: 0 };
     landmarks[LM.RIGHT_IRIS] = { x: 400 / width, y: 306 / height, z: 0 };
     landmarks[LM.LEFT_EYE_OUTER] = { x: 290 / width, y: 300 / height, z: 0 };
@@ -28,6 +35,29 @@ describe("face calibration samples", () => {
     expect(measure.irisDiamPx).toBeCloseTo(12, 6);
     expect(measure.faceWidthPx).toBeCloseTo(120, 6);
     expect(pxToMm(measure).faceWidthMm).toBeCloseTo(117, 6);
+  });
+
+  it("circle fit recovers centre and radius; PD uses the fitted centres + convergence", () => {
+    const width = 1280, height = 720;
+    const lm: LandmarkPoint[] = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+    const put = (ids: number[], cx: number, cy: number, r: number) => {
+      const angles = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
+      ids.forEach((id, k) => (lm[id] = { x: (cx + r * Math.cos(angles[k])) / width, y: (cy + r * Math.sin(angles[k])) / height, z: 0 }));
+    };
+    put([469, 470, 471, 472], 500, 300, 7);
+    put([474, 475, 476, 477], 620, 300, 7);
+    const c = fitIrisCircle(lm, [469, 470, 471, 472], width, height)!;
+    expect(c.cx).toBeCloseTo(500, 6);
+    expect(c.r).toBeCloseTo(7, 6);
+    lm[33] = { x: 470 / width, y: 300 / height, z: 0 };
+    lm[263] = { x: 650 / width, y: 300 / height, z: 0 };
+    lm[468] = { x: 500 / width, y: 300 / height, z: 0 };
+    lm[473] = { x: 620 / width, y: 300 / height, z: 0 };
+    const m = measureFacePx(lm, 0.2, width, height)!;
+    expect(m.irisDiamPx).toBeCloseTo(14, 6);
+    expect(m.ipdPx).toBeCloseTo(120, 6);
+    // 120 px / 14 px × 11.7 mm × 1.02625
+    expect(pxToMm(m).ipdMm).toBeCloseTo((120 / 14) * 11.7 * PD_CONVERGENCE_FACTOR, 6);
   });
 
   it("exposes the exact accepted indices for paired pose/measurement samples", () => {

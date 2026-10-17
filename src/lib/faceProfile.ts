@@ -43,6 +43,41 @@ export const CALIB_MIN_KEPT = 10;
 export const CALIB_TARGET_FRAMES = 28;
 export const CALIB_DURATION_MS = 1500;
 
+/** Near-screen convergence → distance PD (value used by Meta's try-on). */
+export const PD_CONVERGENCE_FACTOR = 1.02625;
+const LEFT_IRIS_CONTOUR = [469, 470, 471, 472] as const;
+const RIGHT_IRIS_CONTOUR = [474, 475, 476, 477] as const;
+
+/**
+ * Algebraic (Kåsa) least-squares circle through iris contour points, in
+ * pixels. Returns null if a point is missing or the fit is degenerate.
+ */
+export function fitIrisCircle(
+  landmarks: LandmarkPoint[],
+  indices: readonly number[],
+  width: number,
+  height: number,
+): { cx: number; cy: number; r: number } | null {
+  const pts = indices.map((i) => landmarks[i]);
+  if (pts.some((p) => !p || !Number.isFinite(p.x + p.y))) return null;
+  const xs = pts.map((p) => p.x * width), ys = pts.map((p) => p.y * height);
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+  for (let i = 0; i < n; i++) {
+    const u = xs[i] - mx, v = ys[i] - my;
+    suu += u * u; svv += v * v; suv += u * v;
+    suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+  }
+  const det = suu * svv - suv * suv;
+  if (Math.abs(det) < 1e-9) return null;
+  const bu = (suuu + suvv) / 2, bv = (svvv + svuu) / 2;
+  const uc = (bu * svv - bv * suv) / det, vc = (suu * bv - suv * bu) / det;
+  const cx = mx + uc, cy = my + vc;
+  const r = xs.reduce((a, x, i) => a + Math.hypot(x - cx, ys[i] - cy), 0) / n;
+  return r > 0 ? { cx, cy, r } : null;
+}
+
 function dist2(a: LandmarkPoint, b: LandmarkPoint, width: number, height: number): number {
   const dx = (a.x - b.x) * width;
   const dy = (a.y - b.y) * height;
@@ -97,8 +132,13 @@ export function measureFacePx(
     return null;
   }
 
-  const leftIrisDiam = dist2(lOuter, lInner, videoWidth, videoHeight);
-  const rightIrisDiam = dist2(rOuter, rInner, videoWidth, videoHeight);
+  // Iris size and centre from a least-squares circle through all four iris
+  // contour points (technique from Meta's try-on; docs/meta-vto-analysis.md)
+  // rather than the single inner↔outer chord, which eyelids and gaze bias.
+  const lCircle = fitIrisCircle(landmarks, LEFT_IRIS_CONTOUR, videoWidth, videoHeight);
+  const rCircle = fitIrisCircle(landmarks, RIGHT_IRIS_CONTOUR, videoWidth, videoHeight);
+  const leftIrisDiam = lCircle ? 2 * lCircle.r : dist2(lOuter, lInner, videoWidth, videoHeight);
+  const rightIrisDiam = rCircle ? 2 * rCircle.r : dist2(rOuter, rInner, videoWidth, videoHeight);
   const irisDiamPx = (leftIrisDiam + rightIrisDiam) / 2;
   if (irisDiamPx < 1e-6) return null;
 
@@ -118,7 +158,10 @@ export function measureFacePx(
   return {
     irisDiamPx,
     eyeOpenness,
-    ipdPx: dist2(lIris, rIris, videoWidth, videoHeight),
+    ipdPx:
+      lCircle && rCircle
+        ? Math.hypot(lCircle.cx - rCircle.cx, lCircle.cy - rCircle.cy)
+        : dist2(lIris, rIris, videoWidth, videoHeight),
     faceWidthPx: dist2(leftCanthus, rightCanthus, videoWidth, videoHeight),
     midEyeX: mid.x,
     midEyeY: mid.y,
@@ -132,7 +175,9 @@ export function pxToMm(measure: FaceMeasurePx): {
 } {
   const mmPerPx = IRIS_DIAMETER_MM / measure.irisDiamPx;
   return {
-    ipdMm: measure.ipdPx * mmPerPx,
+    // Eyes converge on a near screen, so the measured pupil gap is shorter
+    // than the distance PD a frame is fitted to (Meta: ×1.02625).
+    ipdMm: measure.ipdPx * mmPerPx * PD_CONVERGENCE_FACTOR,
     faceWidthMm: measure.faceWidthPx * mmPerPx,
   };
 }

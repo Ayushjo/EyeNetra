@@ -94,3 +94,13 @@ export function canonicalTragion(
   return base
     .add(new Vector3(sign * TRAGION_OFFSET_CM.out, up, -back));
 }
+
+/**
+ * Pupil-to-pupil distance of the canonical face (mm), from the eye centres
+ * (canthi means). Meta's try-on uses 63.2 mm for the same model; this
+ * evaluates to ≈63.0.
+ */
+export const CANONICAL_PD_MM =
+  Math.abs(
+    (canonicalVec(362).x + canonicalVec(263).x) / 2 - (canonicalVec(33).x + canonicalVec(133).x) / 2,
+  ) * 10;
