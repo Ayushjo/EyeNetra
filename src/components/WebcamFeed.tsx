@@ -23,7 +23,10 @@ export function WebcamFeed({ videoRef, className = "" }: WebcamFeedProps) {
     return () => setFrameSyncCanvas(null);
   }, []);
   return (
-    <div className={`relative ${className}`}>
+    // The caller positions this box (TryOnStage passes "absolute inset-0").
+    // Do not add "relative" here: Tailwind orders relative after absolute, so
+    // it overrode the caller and collapsed the box to zero height (black stage).
+    <div className={className || "relative h-full w-full"}>
       <video
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-fill [-webkit-transform:scaleX(-1)] [transform:scaleX(-1)]"
