@@ -439,6 +439,11 @@ export function pantoscopicQuaternion(alphaRad: number): Quaternion {
 
 /** Largest temple fold (rad) — real hinges/temples flex ~±20° at most. */
 export const MAX_TEMPLE_FOLD_RAD = (20 * Math.PI) / 180;
+/** Meta's TEMPLE_ARM_BENDING_DEFORMATION_FACTOR. */
+export const TEMPLE_BEND_FACTOR = 0.75;
+/** Meta's ARM_JOINT_MAX_BENDING_DELTA / BRIDGE_JOINT_MAX_BENDING_DELTA. */
+export const ARM_MAX_BEND_RAD = (10 * Math.PI) / 180;
+export const BRIDGE_MAX_BEND_RAD = (4 * Math.PI) / 180;
 
 export type TempleFoldInput = {
   anchors: HeadAnchors;
@@ -502,7 +507,16 @@ export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: num
     if (tx == null || !(ez < hinge.z - 0.05)) return 0;
     const want = Math.atan2(-(ex - hx), -(ez - hinge.z));
     const have = Math.atan2(-(tx - hx), -(ez - hinge.z));
-    return Math.max(-MAX_TEMPLE_FOLD_RAD, Math.min(MAX_TEMPLE_FOLD_RAD, want - have));
+    // Meta's bending rule (ShopVirtualTryOnConfig): α = angle to the ear ×
+    // 0.75; only OUTWARD (head wider than the frame, α > 0); split between
+    // the arm joint (≤ 10°) and the bridge joint (≤ 4°), each 0.5·α. With no
+    // rig, both act on the temple about the hinge. Rotation about +Y swings
+    // the +x temple inward, so outward is −sgn.
+    const outward = -sgn * (want - have) * TEMPLE_BEND_FACTOR;
+    if (!(outward > 0)) return 0;
+    const bend =
+      Math.min(ARM_MAX_BEND_RAD, outward * 0.5) + Math.min(BRIDGE_MAX_BEND_RAD, outward * 0.5);
+    return -sgn * bend;
   };
   const pos = solve(1);
   const neg = solve(-1);

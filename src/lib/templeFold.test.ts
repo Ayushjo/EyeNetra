@@ -44,3 +44,23 @@ describe("solveTempleFold aims the arm, not a hooked tip", () => {
     expect(b.pos).toBeCloseTo(a.pos, 6);
   });
 });
+
+describe("Meta bending rule (outward only, capped)", () => {
+  it("never bends inward: a frame wider than the head stays straight", () => {
+    // Very wide frame on the canonical head: the ear is inside the temple line.
+    const f = solveTempleFold({ ...base, scaleCm: 19, templeXAt: line(0.5) });
+    expect(f.pos).toBe(0);
+    expect(f.neg).toBe(0);
+  });
+
+  it("bends outward for a narrow frame, capped at arm 10° + bridge 4°", () => {
+    const narrow = solveTempleFold({ ...base, scaleCm: 11, templeXAt: line(0.5) });
+    // +x temple swings outward = negative rotation about +Y; mirror for −x.
+    expect(narrow.pos).toBeLessThan(0);
+    expect(narrow.neg).toBeCloseTo(-narrow.pos, 6);
+    expect(Math.abs(narrow.pos)).toBeLessThanOrEqual(((10 + 4) * Math.PI) / 180 + 1e-9);
+    // Temples modelled sharply converging: needs far more than the caps.
+    const extreme = solveTempleFold({ ...base, templeXAt: line(0.05) });
+    expect(Math.abs(extreme.pos)).toBeCloseTo(((10 + 4) * Math.PI) / 180, 6);
+  });
+});
