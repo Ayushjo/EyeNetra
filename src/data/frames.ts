@@ -1,4 +1,5 @@
 import { REAL_FRAMES } from "./realFrames.generated";
+import { DOWNLOADED_FRAMES } from "./downloadedFrames";
 
 export type FrameVariant = {
   id: string;
@@ -247,6 +248,8 @@ export const FRAMES: FrameSku[] = [
   },
   // Realistic everyday styles (scripts/generate-real-frames.mjs).
   ...REAL_FRAMES,
+  // Third-party models (Khronos CC-BY 4.0, iPoly3D CC0).
+  ...DOWNLOADED_FRAMES,
   {
     id: "p-round-s",
     name: "Param Round S",

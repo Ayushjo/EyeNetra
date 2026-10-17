@@ -26,7 +26,10 @@ describe("catalog lens roles", () => {
     for (const name of frame.fit.lensMaterialNames!) {
       const material = glb.materials.find((m: {name:string}) => m.name === name);
       expect(material, name).toBeDefined();
-      expect(material.alphaMode).toBe('BLEND');
+      // Transparent either by alpha blending or by glTF transmission
+      // (KHR_materials_transmission, e.g. the Khronos sunglasses).
+      const transmissive = material.extensions?.KHR_materials_transmission != null;
+      expect(material.alphaMode === 'BLEND' || transmissive, name).toBe(true);
     }
   });
 });

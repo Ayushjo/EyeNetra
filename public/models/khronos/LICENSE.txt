@@ -1,0 +1,4 @@
+SunglassesKhronos.glb
+Source: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/SunglassesKhronos
+License: CC-BY 4.0 International — https://creativecommons.org/licenses/by/4.0/
+Attribution: Eric Chadwick, Darmstadt Graphics Group GmbH, 2024 (Khronos glTF Sample Assets)
