@@ -1,5 +1,5 @@
 import { computePose, computePosePerspective, perspectiveFaceDepth } from "@/lib/fitPose";
-import { cachedPantoRad, type GlassesGeom, type HeadAnchors } from "@/lib/headAnchors";
+import { frameTiltRad, type GlassesGeom, type HeadAnchors } from "@/lib/headAnchors";
 import type { FaceProfile } from "@/lib/faceProfile";
 import type { FrameSku } from "@/data/frames";
 import type { LandmarkPoint } from "@/store/tryOnStore";
@@ -84,17 +84,8 @@ export function buildTrackingFrame(input: BuildFrameInput): TrackingFrame {
       ? sku.fit.lensSpanMm / glassesGeom.lensSpanNorm
       : sku.fit.frameWidthMm;
   const scaleTune = (sku.fit.perspScaleTune ?? 1) * perspTune.scaleTune;
-  // The tilt solve must use the RENDERED scale so its ear mapping matches the
-  // temple fold (GlassesModel) and the pose below.
-  const pantoRad = cachedPantoRad(
-    headAnchors,
-    glassesGeom,
-    sku.id,
-    sku.fit.frameWidthMm,
-    sku.fit.templeLengthMm,
-    (effectiveWidthMm / 10) * (cameraCalib?.scaleCorrection ?? 1) * scaleTune,
-    sku.fit.nosePadOffsetMm,
-  );
+  // Fixed per-product tilt (Meta's arrangement), not a per-user solve.
+  const pantoRad = frameTiltRad(sku.fit);
   const perspPose = computePosePerspective({
     landmarks,
     transformMatrix,

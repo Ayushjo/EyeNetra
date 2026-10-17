@@ -53,6 +53,11 @@ export type FrameSku = {
      * automatic bridge scan misreads an odd GLB.
      */
     bridgeLocalOverride?: [number, number, number];
+    /**
+     * Per-product frame tilt in degrees (negative = temples slope down).
+     * Default −3.5° — Meta's try-on default (GLASS_OFFSETS.rotationX).
+     */
+    pantoDeg?: number;
   };
   variants: FrameVariant[];
 };

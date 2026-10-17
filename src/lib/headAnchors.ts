@@ -508,3 +508,13 @@ export function solveTempleFold(input: TempleFoldInput): { pos: number; neg: num
   const neg = solve(-1);
   return { pos, neg, earZ };
 }
+
+/**
+ * Frame tilt (pantoscopic, rad) about the glasses' X axis. Meta's try-on uses
+ * a fixed −3.5° (GLASS_OFFSETS.rotationX, temples sloping down) with optional
+ * per-product overrides instead of solving per user; we do the same.
+ */
+export const DEFAULT_FRAME_TILT_DEG = -3.5;
+export function frameTiltRad(fit: { pantoDeg?: number }): number {
+  return ((fit.pantoDeg ?? DEFAULT_FRAME_TILT_DEG) * Math.PI) / 180;
+}

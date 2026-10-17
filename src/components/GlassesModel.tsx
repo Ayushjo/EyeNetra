@@ -22,7 +22,7 @@ import {
 } from "three";
 import type { FrameSku, FrameVariant } from "@/data/frames";
 import {
-  solvePantoscopicPitch,
+  frameTiltRad,
   solveTempleFold,
   type GlassesGeom,
 } from "@/lib/headAnchors";
@@ -578,14 +578,7 @@ export function GlassesModel({
         ? fit.lensSpanMm / geom.lensSpanNorm
         : fit.frameWidthMm;
     const scaleCm = (widthMm / 10) * (scaleCorrection || 1) * (fit.perspScaleTune ?? 1);
-    const pantoRad = solvePantoscopicPitch({
-      anchors: headAnchors,
-      glassesGeom: geom,
-      frameWidthMm: fit.frameWidthMm,
-      templeLengthMm: fit.templeLengthMm,
-      scaleCm,
-      nosePadOffsetMm: fit.nosePadOffsetMm,
-    });
+    const pantoRad = frameTiltRad(fit);
     const fold = solveTempleFold({
       anchors: headAnchors,
       hinge: geom.hingeLocal,
