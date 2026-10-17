@@ -476,10 +476,10 @@ function applyTempleFold(
  * smoothstep temple alpha by model-space z, e.g. WebAR.rocks VTOGlasses
  * branchFadingZ −0.9 / transition 0.6). The ear is not tracked, so the tip
  * is always a guess; fading it reads better than a visibly wrong tip.
- * uFade = (start, end) in normalized glasses z, set from the solved ear depth.
+ * uFade = (start, end) in normalized glasses z: Meta's fixed 10→11 cm band.
  */
-export const TEMPLE_FADE_BEFORE_EAR = 0.02; // ~3 mm in front of the ear point
-export const TEMPLE_FADE_AFTER_EAR = 0.07; // gone ~1 cm behind it
+export const TEMPLE_FADE_START_CM = 10;
+export const TEMPLE_FADE_END_CM = 11;
 export type GlassesUniforms = { uFade: { value: Vector2 } };
 
 function installDepthPull(
@@ -588,12 +588,13 @@ export function GlassesModel({
       nosePadOffsetMm: fit.nosePadOffsetMm,
     });
     applyTempleFold(deform, geom.hingeLocal, fold);
-    if (Number.isFinite(fold.earZ)) {
-      glassesUniforms.uFade.value.set(
-        fold.earZ + TEMPLE_FADE_BEFORE_EAR,
-        fold.earZ - TEMPLE_FADE_AFTER_EAR,
-      );
-    }
+    // Meta's fixed fade band: 10 → 11 cm behind the lens front (their
+    // TEMPLE_ARM_FADE_START/END_DEPTH −0.10/−0.11 at glasses scale 100),
+    // converted to this model's normalized units with the rendered scale.
+    glassesUniforms.uFade.value.set(
+      -TEMPLE_FADE_START_CM / scaleCm,
+      -TEMPLE_FADE_END_CM / scaleCm,
+    );
     setWalls((prev) => {
       prev?.dispose();
       return buildTempleWalls(deform, geom.hingeLocal, fold);
