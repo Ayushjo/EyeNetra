@@ -204,3 +204,58 @@ export function skullProxyMatrix(
   _sk.makeScale(radii.x, radii.y, radii.z).setPosition(center);
   return out.copy(inverseAnchor).multiply(_flip).multiply(headMatrix).multiply(_sk);
 }
+
+/** MediaPipe face-oval contour (canonical mesh indices, closed loop). */
+export const FACE_OVAL = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377,
+  152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
+] as const;
+
+/** Head loft shape (head-local cm). */
+export const HEAD_LOFT = { rings: 8, backZ: -14, backShrink: 0.38 } as const;
+
+/**
+ * Our own sculpted head occluder (Meta ships a head-occluder model for this;
+ * we do not copy it). The canonical face-oval contour is lofted backwards to
+ * a rounded back of the head, so it meets the face mask exactly at its edge
+ * and fills sides, top and back behind it. Cross-sections only SHRINK going
+ * back, so the head is never wider than the face mask's own outline and a
+ * temple resting at the ear stays visible from the near side.
+ * Returns positions (head-local cm) and triangle indices; built once.
+ */
+export function buildHeadLoft(): { positions: Float32Array; indices: number[] } {
+  const n = FACE_OVAL.length;
+  const oval = FACE_OVAL.map((i) => new Vector3().fromArray(CANONICAL_MESH_CM, i * 3));
+  const centre = oval.reduce((a, p) => a.add(p), new Vector3()).multiplyScalar(1 / n);
+  const R = HEAD_LOFT.rings;
+  const pos: number[] = [];
+  for (let r = 0; r <= R; r++) {
+    const t = r / R;
+    const shrink = 1 - HEAD_LOFT.backShrink * t * t;
+    for (const p of oval) {
+      const x = centre.x + (p.x - centre.x) * shrink;
+      const y = centre.y + (p.y - centre.y) * shrink;
+      // Ease the depth so the first rings hug the face edge, then sweep back.
+      const z = p.z + (HEAD_LOFT.backZ - p.z) * (1 - Math.cos((t * Math.PI) / 2));
+      pos.push(x, y, z);
+    }
+  }
+  const backCentre = pos.length / 3;
+  pos.push(centre.x, centre.y * (1 - HEAD_LOFT.backShrink), HEAD_LOFT.backZ - 1);
+  const idx: number[] = [];
+  for (let r = 0; r < R; r++) {
+    for (let k = 0; k < n; k++) {
+      const a = r * n + k, b = r * n + ((k + 1) % n), c = (r + 1) * n + k, d = (r + 1) * n + ((k + 1) % n);
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  for (let k = 0; k < n; k++) idx.push(R * n + k, backCentre, R * n + ((k + 1) % n));
+  return { positions: new Float32Array(pos), indices: idx };
+}
+
+const _hm = new Matrix4();
+/** Anchor-local placement of the head loft: inverseAnchor · mirror · headMatrix. */
+export function headLoftMatrix(headMatrix: Matrix4, inverseAnchor: Matrix4, out: Matrix4): Matrix4 {
+  _hm.makeScale(-1, 1, 1);
+  return out.copy(inverseAnchor).multiply(_hm).multiply(headMatrix);
+}

@@ -5,7 +5,7 @@ import { useMemo, useRef } from "react";
 import { BufferAttribute, BufferGeometry, DoubleSide, Matrix4, Quaternion, ShaderMaterial, Vector3, type Group, type Mesh } from "three";
 import { perspectiveFaceDepth } from "@/lib/fitPose";
 import { FACE_TRIANGLES } from "@/lib/faceMesh";
-import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric, writeFaceSurfaceRigid } from "@/lib/faceOcclusion";
+import { setEarProxy, setPosteriorCap, skullProxyMatrix, writeFaceSurface, writeFaceSurfaceMetric, writeFaceSurfaceRigid, buildHeadLoft, headLoftMatrix } from "@/lib/faceOcclusion";
 import { POSE_LOCKED_PLACEMENT } from "@/lib/fitPose";
 import { decomposeHeadMatrix, earInGlassesSpace } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
@@ -94,6 +94,16 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     return g;
   }, []);
   const skullShadowRef = useRef<Mesh>(null);
+  const headLoftRef = useRef<Mesh>(null);
+  // Our sculpted head occluder: canonical face oval lofted to the back of the
+  // head (lib/faceOcclusion buildHeadLoft), static, moved by the pose.
+  const headLoftGeometry = useMemo(() => {
+    const { positions, indices } = buildHeadLoft();
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(positions, 3));
+    g.setIndex(indices);
+    return g;
+  }, []);
   // Shared contact-point uniforms; each material has its own uToAnchor.
   const shadowUniforms = useMemo(
     () => ({
@@ -134,8 +144,9 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     const earR = earRRef.current;
     const shadow = shadowRef.current;
     const skullShadow = skullShadowRef.current;
-    if (!mesh || !cap || !earL || !earR || !shadow || !skullShadow) return;
-    mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = skullShadow.visible = false;
+    const headLoft = headLoftRef.current;
+    if (!mesh || !cap || !earL || !earR || !shadow || !skullShadow || !headLoft) return;
+    mesh.visible = cap.visible = earL.visible = earR.visible = shadow.visible = skullShadow.visible = headLoft.visible = false;
     const anchor = anchorRef.current;
     const state = useTryOnStore.getState();
     const { trackingFrame, hasFace, videoWidth, videoHeight, transformMatrix, renderMode, showOccluder } = state;
@@ -168,6 +179,10 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
     if (!ok) return;
     attribute.needsUpdate = true;
     if (metric) {
+      headLoft.matrixAutoUpdate = false;
+      headLoftMatrix(headMatrix.current, inverse.current, headLoft.matrix);
+      headLoft.matrixWorldNeedsUpdate = true;
+      headLoft.visible = true;
       // Head-shaped skull proxy fitted to the (tracked) ear anchors.
       cap.matrixAutoUpdate = false;
       skullProxyMatrix(
@@ -216,6 +231,9 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
   return (
     <>
       <mesh ref={meshRef} geometry={geometry} visible={false} renderOrder={0} frustumCulled={false}>
+        <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
+      </mesh>
+      <mesh ref={headLoftRef} geometry={headLoftGeometry} visible={false} renderOrder={0} frustumCulled={false}>
         <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
       </mesh>
       <mesh ref={capRef} visible={false} renderOrder={0} frustumCulled={false}>
