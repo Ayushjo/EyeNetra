@@ -220,6 +220,34 @@ export function showSuggestionOnFace(s: TryOnSuggestion) {
   useVoiceStore.setState({ activeSku: s.sku });
 }
 
+/**
+ * Walk-up screen while the assistant is off: a greeting that invites the
+ * customer to tap the orb, with sample frame shapes drifting. Gone the
+ * moment a conversation starts.
+ */
+function IdleAttract() {
+  const phase = useVoiceStore((s) => s.phase);
+  const suggestions = useVoiceStore((s) => s.suggestions.length);
+  if (phase !== "off" || suggestions > 0) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col items-center pt-6 text-center sm:pt-10">
+      <div className="flex gap-6 opacity-70">
+        {["aviator", "round", "cat-eye"].map((shape, i) => (
+          <span key={shape} className="idle-float" style={{ animationDelay: `${i * 0.8}s` }}>
+            <FrameGlyph shape={shape} color="#fcd9a0" className="h-6 w-12 sm:h-8 sm:w-16" />
+          </span>
+        ))}
+      </div>
+      <p className="mt-3 rounded-2xl bg-black/35 px-5 py-2 text-xl font-semibold text-white shadow-lg backdrop-blur-md sm:text-3xl">
+        नमस्ते! 👋
+      </p>
+      <p className="mt-2 rounded-full bg-black/35 px-4 py-1 text-sm text-white/85 backdrop-blur-md sm:text-base">
+        नीचे वाला गोला दबाइए और बोलिए — मैं आपके लिए फ्रेम पहनाकर दिखाऊँगा
+      </p>
+    </div>
+  );
+}
+
 /** Everything the voice assistant draws on top of the mirror. */
 export function VoiceStageOverlay() {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -227,6 +255,7 @@ export function VoiceStageOverlay() {
     <div ref={boxRef} className="pointer-events-none absolute inset-0 z-40">
       {/* Soft vignette at the bottom so captions and the strip stay legible. */}
       <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/45 to-transparent" />
+      <IdleAttract />
       <FrameDrop boxRef={boxRef} />
       <HeartBurst />
       <VoiceCaptions />

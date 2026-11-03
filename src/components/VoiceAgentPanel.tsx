@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { resetVoiceSession, useVoiceAgent } from "@/hooks/useVoiceAgent";
 import { useVoiceStore } from "@/store/voiceStore";
+import { sfx } from "@/lib/sfx";
 import { FrameGlyph } from "@/components/voice/FrameGlyph";
 import { formatRupees, showSuggestionOnFace } from "@/components/voice/VoiceStageOverlay";
 
@@ -14,6 +15,17 @@ import { formatRupees, showSuggestionOnFace } from "@/components/voice/VoiceStag
  */
 export function VoiceSession() {
   useVoiceAgent({ onTryOnFrame: showSuggestionOnFace });
+  // Sound cues, from store transitions (one place, whatever caused them).
+  useEffect(
+    () =>
+      useVoiceStore.subscribe((s, prev) => {
+        if (s.status === "connected" && prev.status !== "connected") sfx.connect();
+        if (s.status === "idle" && prev.status === "connected") sfx.end();
+        if (s.dropSeq > prev.dropSeq) sfx.drop();
+        if (s.likeSeq > prev.likeSeq) sfx.like();
+      }),
+    [],
+  );
   return null;
 }
 
