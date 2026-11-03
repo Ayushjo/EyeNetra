@@ -1,5 +1,5 @@
 import { TryOnStage } from "@/components/TryOnStage";
-import { VoiceAgentPanel } from "@/components/VoiceAgentPanel";
+import { VoiceAgentPanel, VoiceSession } from "@/components/VoiceAgentPanel";
 
 export default function Home() {
   return (
@@ -18,6 +18,7 @@ export default function Home() {
           </p>
         </header>
 
+        <VoiceSession />
         <TryOnStage />
 
         <VoiceAgentPanel />

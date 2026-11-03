@@ -1,208 +1,190 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { useVoiceAgent, type TryOnSuggestion } from "@/hooks/useVoiceAgent";
-import { getFrameById } from "@/data/frames";
-import { useTryOnStore } from "@/store/tryOnStore";
-
-function describeTryOnModel(frameId: string, variantId: string): string {
-  try {
-    const frame = getFrameById(frameId);
-    const variant = frame.variants.find((v) => v.id === variantId);
-    return variant ? `${frame.name} · ${variant.name} (similar style)` : `${frame.name} (similar style)`;
-  } catch {
-    return "no 3D model mapped";
-  }
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  idle: "Not connected",
-  connecting: "Connecting…",
-  connected: "Listening",
-  error: "Connection failed",
-};
+import { useEffect, useRef, useState } from "react";
+import { resetVoiceSession, useVoiceAgent } from "@/hooks/useVoiceAgent";
+import { useVoiceStore } from "@/store/voiceStore";
+import { FrameGlyph } from "@/components/voice/FrameGlyph";
+import { formatRupees, showSuggestionOnFace } from "@/components/voice/VoiceStageOverlay";
 
 /**
- * Voice assistant dock that lives ON the try-on page. The WebRTC session,
- * mic, bot audio, and transcript all stay alive while frames change on the
- * live face: a try_on_frame tool call from the agent selects the frame in
- * the try-on store directly — no navigation, no confirmation step (the
- * customer already asked to see it; they can say "pehle wala dikhao" or tap
- * another card to switch back).
+ * Runs the page's one voice session (mount once). The WebRTC call, mic, bot
+ * audio and transcript stay alive while frames change on the live face: a
+ * try_on_frame message from the agent selects the frame in the try-on store
+ * directly — no navigation, no confirmation step.
+ */
+export function VoiceSession() {
+  useVoiceAgent({ onTryOnFrame: showSuggestionOnFace });
+  return null;
+}
+
+/** "Your picks": frames the customer liked, with a total. */
+function PicksTray() {
+  const suggestions = useVoiceStore((s) => s.suggestions);
+  const picks = useVoiceStore((s) => s.picks);
+  const liked = suggestions.filter((s) => picks.includes(s.sku));
+  if (liked.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-amber-200/80">
+        आपकी पसंद · Your picks
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {liked.map((s) => (
+          <button
+            key={s.sku}
+            type="button"
+            onClick={() => showSuggestionOnFace(s)}
+            className="flex items-center gap-3 rounded-xl border border-amber-200/30 bg-amber-200/10 px-3 py-2 text-left transition hover:bg-amber-200/20"
+          >
+            <FrameGlyph shape={s.shape} color="#fcd9a0" className="h-7 w-14" />
+            <span className="leading-tight">
+              <span className="block text-sm font-medium text-white">{s.name}</span>
+              <span className="block text-xs text-white/60">
+                {s.brand} {s.price != null ? `· ${formatRupees(s.price)}` : ""}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Shown when the conversation ends: what they saw, what they liked. */
+function SessionSummary() {
+  const ended = useVoiceStore((s) => s.ended);
+  const suggestions = useVoiceStore((s) => s.suggestions);
+  const picks = useVoiceStore((s) => s.picks);
+  const disconnect = useVoiceStore((s) => s.disconnect);
+  if (!ended || suggestions.length === 0) return null;
+  return (
+    <div className="rounded-2xl border border-teal-300/20 bg-gradient-to-br from-teal-400/10 to-amber-300/10 p-4">
+      <p className="text-base font-semibold text-white">धन्यवाद! 🙏</p>
+      <p className="mt-1 text-sm text-white/70">
+        आपने {suggestions.length} फ्रेम देखे
+        {picks.length ? `, ${picks.length} पसंद आए` : ""}. हमारे executive आपकी मदद करेंगे।
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          disconnect();
+          resetVoiceSession();
+        }}
+        className="mt-3 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+      >
+        नया ग्राहक · Next customer
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The session card under the mirror: status, the customer's picks, the end
+ * summary, and the full conversation in a collapsible drawer (the live line
+ * is already captioned on the mirror itself).
  */
 export function VoiceAgentPanel() {
-  const selectedFrameId = useTryOnStore((s) => s.selectedFrameId);
-  const selectedVariantId = useTryOnStore((s) => s.selectedVariantId);
-
-  const showOnFace = useCallback((s: TryOnSuggestion) => {
-    const store = useTryOnStore.getState();
-    // Guard against a stale catalogue map: only ids that exist in frames.ts.
-    let frame;
-    try {
-      frame = getFrameById(s.frameId);
-    } catch {
-      console.warn(`[EyeNetra:voice] try_on_frame → unknown frame id ${s.frameId}`);
-      return;
-    }
-    // setFrame before setVariant — setFrame resets the variant to default.
-    store.setFrame(frame.id);
-    if (frame.variants.some((v) => v.id === s.variantId)) {
-      store.setVariant(s.variantId);
-    }
-    // The customer must SEE the change: banner on the stage + bring the
-    // face into view (the chat lives below the stage on a tall page).
-    store.setShowcase({ name: s.name, brand: s.brand });
-    document
-      .getElementById("tryon-stage")
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
-
-  const {
-    status,
-    errorMessage,
-    transcript,
-    suggestions,
-    activeSku,
-    setActiveSku,
-    botSpeaking,
-    connect,
-    disconnect,
-  } = useVoiceAgent({ onTryOnFrame: showOnFace });
+  const status = useVoiceStore((s) => s.status);
+  const phase = useVoiceStore((s) => s.phase);
+  const errorMessage = useVoiceStore((s) => s.errorMessage);
+  const transcript = useVoiceStore((s) => s.transcript);
+  const connect = useVoiceStore((s) => s.connect);
+  const disconnect = useVoiceStore((s) => s.disconnect);
+  const [open, setOpen] = useState(false);
 
   // Scroll the transcript box itself — scrollIntoView would scroll the whole
-  // page and undo the "bring the face into view" scroll on every new line.
-  const transcriptBoxRef = useRef<HTMLDivElement>(null);
+  // page away from the mirror on every new line.
+  const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const box = transcriptBoxRef.current;
+    const box = boxRef.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [transcript]);
+  }, [transcript, open]);
 
   const connected = status === "connected";
   const busy = status === "connecting";
+  const dot =
+    phase === "speaking"
+      ? "bg-amber-300 animate-pulse"
+      : phase === "thinking"
+        ? "bg-violet-400 animate-pulse"
+        : phase === "user"
+          ? "bg-teal-300 animate-pulse"
+          : connected
+            ? "bg-teal-400"
+            : status === "error"
+              ? "bg-red-500"
+              : "bg-zinc-500";
 
   return (
     <section
       id="voice"
-      className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+      className="space-y-4 rounded-2xl border border-white/10 bg-zinc-950 p-4 text-white shadow-xl"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              connected
-                ? botSpeaking
-                  ? "bg-emerald-500 animate-pulse"
-                  : "bg-emerald-400"
-                : status === "error"
-                  ? "bg-red-500"
-                  : "bg-zinc-300"
-            }`}
-            aria-hidden
-          />
+          <span className={`h-2.5 w-2.5 rounded-full ${dot}`} aria-hidden />
           <div>
-            <p className="text-sm font-medium text-zinc-800">
-              Voice assistant · {STATUS_LABEL[status]}
-              {connected && botSpeaking ? " — speaking" : ""}
+            <p className="text-sm font-medium">
+              Eyenetra assistant
+              <span className="ml-2 text-white/50">
+                {busy ? "connecting…" : connected ? "live" : status === "error" ? "error" : "off"}
+              </span>
             </p>
             {errorMessage ? (
-              <p className="text-xs text-red-600">{errorMessage}</p>
+              <p className="text-xs text-red-400">{errorMessage}</p>
             ) : (
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-white/50">
                 {connected
-                  ? "Mic is live — Hindi, Hinglish or English. Frames it suggests appear on your face."
-                  : "Start the assistant, then allow microphone access."}
+                  ? "हिंदी, Hinglish या English में बोलिए — फ्रेम सीधे आपके चेहरे पर दिखेंगे।"
+                  : "Tap the orb on the mirror, or here, and allow the microphone."}
               </p>
             )}
           </div>
         </div>
         <button
           type="button"
-          onClick={() => (connected ? void disconnect() : void connect())}
+          onClick={() => (connected ? disconnect() : connect())}
           disabled={busy}
-          className={`rounded-lg px-5 py-2.5 text-sm font-medium transition ${
-            connected
-              ? "bg-zinc-200 text-zinc-800 hover:bg-zinc-300"
-              : "bg-zinc-900 text-white hover:bg-zinc-700"
-          } disabled:opacity-50`}
+          className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+            connected ? "bg-white/10 hover:bg-white/20" : "bg-teal-400 text-zinc-950 hover:bg-teal-300"
+          }`}
         >
-          {busy ? "Connecting…" : connected ? "End conversation" : "Talk to assistant"}
+          {busy ? "Connecting…" : connected ? "End" : "Talk"}
         </button>
       </div>
 
-      {suggestions.length > 0 ? (
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
-            Suggested by the assistant
-          </p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {suggestions.map((s) => {
-              const onFace =
-                s.sku === activeSku &&
-                selectedFrameId === s.frameId &&
-                selectedVariantId === s.variantId;
-              return (
-                <div
-                  key={s.sku}
-                  className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
-                    onFace ? "border-emerald-400 bg-emerald-50" : "border-zinc-200 bg-white"
+      <SessionSummary />
+      <PicksTray />
+
+      <div className="rounded-xl border border-white/10">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-white/50"
+        >
+          <span>Conversation · {transcript.length}</span>
+          <span aria-hidden>{open ? "▾" : "▸"}</span>
+        </button>
+        {open ? (
+          <div ref={boxRef} className="flex max-h-64 flex-col gap-2 overflow-y-auto border-t border-white/10 px-4 py-3">
+            {transcript.length === 0 ? (
+              <p className="text-sm text-white/40">The conversation will appear here.</p>
+            ) : (
+              transcript.map((line) => (
+                <p
+                  key={line.id}
+                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                    line.role === "user"
+                      ? "self-end bg-teal-400/15 text-teal-50"
+                      : "self-start bg-white/5 text-white"
                   }`}
                 >
-                  <div>
-                    <p className="text-sm font-medium text-zinc-900">{s.name}</p>
-                    <p className="text-xs text-zinc-500">
-                      {s.brand}
-                      {onFace ? " · on your face now" : ""}
-                    </p>
-                    {/* The catalogue maps onto four generic 3D models — say
-                        which one is actually rendered so nobody mistakes it
-                        for an exact visualization of the SKU. */}
-                    <p className="text-[11px] text-zinc-400">
-                      Shown as: {describeTryOnModel(s.frameId, s.variantId)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={onFace}
-                    onClick={() => {
-                      setActiveSku(s.sku);
-                      showOnFace(s);
-                    }}
-                    className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:bg-emerald-600"
-                  >
-                    {onFace ? "Showing" : "Show on me"}
-                  </button>
-                </div>
-              );
-            })}
+                  {line.text}
+                </p>
+              ))
+            )}
           </div>
-        </div>
-      ) : null}
-
-      <div className="rounded-xl border border-zinc-200">
-        <p className="border-b border-zinc-100 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
-          Conversation
-        </p>
-        <div ref={transcriptBoxRef} className="flex max-h-56 min-h-24 flex-col gap-2 overflow-y-auto px-4 py-3">
-          {transcript.length === 0 ? (
-            <p className="text-sm text-zinc-400">
-              The conversation transcript will appear here once you connect.
-            </p>
-          ) : (
-            transcript.map((line) => (
-              <p
-                key={line.id}
-                className={`text-sm ${
-                  line.role === "user" ? "text-zinc-500" : "font-medium text-zinc-900"
-                }`}
-              >
-                <span className="mr-2 text-[11px] uppercase tracking-wide text-zinc-400">
-                  {line.role === "user" ? "You" : "Agent"}
-                </span>
-                {line.text}
-              </p>
-            ))
-          )}
-        </div>
+        ) : null}
       </div>
     </section>
   );

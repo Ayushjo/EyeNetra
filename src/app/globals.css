@@ -17,3 +17,50 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Voice assistant — captions: each newly spoken word fades/rises in. */
+@keyframes caption-word-in {
+  from { opacity: 0; transform: translateY(0.25em); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.caption-word {
+  display: inline-block;
+  white-space: pre;
+  animation: caption-word-in 260ms ease-out both;
+}
+
+/* Frame drop: card flies from the orb toward the face, then settles. */
+@keyframes frame-drop {
+  0% { opacity: 0; transform: translate(var(--drop-x, 40vw), var(--drop-y, 30vh)) scale(0.3) rotate(-8deg); }
+  55% { opacity: 1; transform: translate(0, -6px) scale(1.04) rotate(1deg); }
+  75% { transform: translate(0, 2px) scale(0.99); }
+  100% { opacity: 1; transform: none; }
+}
+.frame-drop { animation: frame-drop 760ms cubic-bezier(0.2, 0.9, 0.25, 1.05) both; }
+
+/* Flash around the face when a new frame lands. */
+@keyframes face-flash {
+  0% { opacity: 0; transform: scale(0.85); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+.face-flash { animation: face-flash 900ms ease-out both; }
+
+/* Heart burst on "ye pasand hai". */
+@keyframes heart-pop {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.2); }
+  20% { opacity: 1; transform: translate(0, -10px) scale(1.2); }
+  100% { opacity: 0; transform: translate(var(--hx, 0px), -160px) scale(0.8) rotate(var(--hr, 0deg)); }
+}
+.heart-pop { animation: heart-pop 1400ms ease-out both; }
+
+/* Idle attract screen: slow drift of the sample frames. */
+@keyframes idle-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.idle-float { animation: idle-float 5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .caption-word, .frame-drop, .face-flash, .heart-pop, .idle-float { animation: none; }
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { FramePicker } from "@/components/FramePicker";
 import { LandmarkOverlay } from "@/components/LandmarkOverlay";
 import { TryOnControls } from "@/components/TryOnControls";
@@ -10,6 +10,7 @@ import {
   freezeCaptureFromStage,
 } from "@/components/CaptureStudio";
 import { WebcamFeed } from "@/components/WebcamFeed";
+import { VoiceStageOverlay } from "@/components/voice/VoiceStageOverlay";
 import { useTrackingSession } from "@/hooks/useTrackingSession";
 import { useLightEstimate } from "@/hooks/useLightEstimate";
 import { useAutoFitCalibration } from "@/hooks/useAutoFitCalibration";
@@ -47,31 +48,6 @@ function StatusPanel({
           {actionLabel}
         </button>
       ) : null}
-    </div>
-  );
-}
-
-/** "Showing: <frame>" toast on the stage when the assistant changes the frame. */
-function ShowcaseBanner() {
-  const showcase = useTryOnStore((s) => s.showcase);
-  const frame = useTryOnStore((s) => s.selectedFrame());
-  const variant = useTryOnStore((s) => s.selectedVariant());
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    if (!showcase) return;
-    setVisible(true);
-    const id = setTimeout(() => setVisible(false), 7000);
-    return () => clearTimeout(id);
-  }, [showcase]);
-  if (!showcase || !visible) return null;
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center">
-      <div className="rounded-xl bg-black/70 px-4 py-2 text-center text-white shadow-lg backdrop-blur">
-        <p className="text-sm font-medium">Showing: {showcase.name}</p>
-        <p className="text-[11px] text-zinc-300">
-          {showcase.brand} · rendered as {frame.name} ({variant.name})
-        </p>
-      </div>
     </div>
   );
 }
@@ -128,7 +104,6 @@ export function TryOnStage() {
         className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-zinc-900 shadow-xl ring-1 ring-zinc-200"
         style={{ aspectRatio: `${stageAspect}` }}
       >
-        <ShowcaseBanner />
         {/* Always mounted so getUserMedia can attach before ready UI. */}
         <WebcamFeed
           videoRef={videoRef}
@@ -139,6 +114,7 @@ export function TryOnStage() {
           <>
             <LandmarkOverlay />
             <TryOnCanvas />
+            <VoiceStageOverlay />
             <div className="pointer-events-none absolute left-4 top-4 z-30 rounded-md bg-black/55 px-3 py-1.5 text-xs font-medium tracking-wide text-white">
               {trackingStatus === "loading"
                 ? "Loading face tracker…"

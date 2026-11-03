@@ -1,25 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PipecatClient, type BotLLMTextData, type TranscriptData } from "@pipecat-ai/client-js";
+import { useCallback, useEffect, useRef } from "react";
+import { PipecatClient, type BotTTSTextData, type TranscriptData } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
+import {
+  useVoiceStore,
+  voiceLevels,
+  type TranscriptLine,
+  type TryOnSuggestion,
+} from "@/store/voiceStore";
 
-export type VoiceStatus = "idle" | "connecting" | "connected" | "error";
-
-export type TryOnSuggestion = {
-  kind: "try_on_frame";
-  sku: string;
-  name: string;
-  brand: string;
-  frameId: string;
-  variantId: string;
-};
-
-export type TranscriptLine = {
-  id: number;
-  role: "user" | "bot";
-  text: string;
-};
+export type { TranscriptLine, TryOnSuggestion, VoiceStatus } from "@/store/voiceStore";
 
 /** Default endpoint for bot.py's SmallWebRTC offer route. */
 const DEFAULT_OFFER_ENDPOINT = "http://localhost:7860/api/offer";
@@ -27,13 +18,55 @@ const DEFAULT_OFFER_ENDPOINT = "http://localhost:7860/api/offer";
 export type UseVoiceAgentOptions = {
   endpoint?: string;
   /**
-   * Fired when the agent calls try_on_frame. The try-on page uses this to
-   * put the frame on the live face immediately — no navigation, the WebRTC
-   * session and mic stay up.
+   * Fired when the agent shows a frame. The try-on page uses this to put the
+   * frame on the live face immediately — no navigation, the WebRTC session
+   * and mic stay up.
    */
   onTryOnFrame?: (suggestion: TryOnSuggestion) => void;
 };
 
+/** Words from successive TTS chunks: chunks carry no reliable spacing. */
+function joinSpoken(prev: string, next: string): string {
+  const t = next.trim();
+  if (!t) return prev;
+  if (!prev) return t;
+  return /^[।,.!?…]/.test(t) ? prev + t : `${prev} ${t}`;
+}
+
+/**
+ * Smoothed RMS meter on a MediaStreamTrack. Fast attack, slow release, so
+ * the orb jumps with syllables and settles gently between them.
+ */
+function startMeter(ctx: AudioContext, track: MediaStreamTrack, key: "mic" | "bot"): () => void {
+  const src = ctx.createMediaStreamSource(new MediaStream([track]));
+  const an = ctx.createAnalyser();
+  an.fftSize = 512;
+  src.connect(an);
+  const buf = new Float32Array(an.fftSize);
+  let raf = 0;
+  const tick = () => {
+    an.getFloatTimeDomainData(buf);
+    let ss = 0;
+    for (let i = 0; i < buf.length; i++) ss += buf[i] * buf[i];
+    // Speech RMS sits around 0.02–0.2; map to 0–1 on a soft curve.
+    const level = Math.min(1, Math.sqrt(Math.sqrt(ss / buf.length)) * 1.6);
+    const prev = voiceLevels[key];
+    voiceLevels[key] = level > prev ? prev + (level - prev) * 0.6 : prev + (level - prev) * 0.08;
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  return () => {
+    cancelAnimationFrame(raf);
+    src.disconnect();
+    voiceLevels[key] = 0;
+  };
+}
+
+/**
+ * One voice session for the page. State lives in useVoiceStore so the orb,
+ * captions and panel (different parts of the tree) all read the same call.
+ * Mount once (VoiceSession).
+ */
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const endpoint =
     options.endpoint ??
@@ -43,16 +76,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   onTryOnFrameRef.current = options.onTryOnFrame;
   const clientRef = useRef<PipecatClient | null>(null);
   const lineIdRef = useRef(0);
-  const botBufferRef = useRef("");
   const botLineIdRef = useRef<number | null>(null);
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
-  const [status, setStatus] = useState<VoiceStatus>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
-  const [suggestions, setSuggestions] = useState<TryOnSuggestion[]>([]);
-  /** SKU currently shown on the face by the agent (last try_on_frame). */
-  const [activeSku, setActiveSku] = useState<string | null>(null);
-  const [botSpeaking, setBotSpeaking] = useState(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const metersRef = useRef<(() => void)[]>([]);
 
   const releaseAudio = useCallback(() => {
     for (const el of audioElsRef.current) {
@@ -60,13 +87,40 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       el.remove();
     }
     audioElsRef.current = [];
+    for (const stop of metersRef.current) stop();
+    metersRef.current = [];
+    void audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+  }, []);
+
+  const meter = useCallback((track: MediaStreamTrack, key: "mic" | "bot") => {
+    try {
+      const ctx = (audioCtxRef.current ??= new AudioContext());
+      void ctx.resume();
+      metersRef.current.push(startMeter(ctx, track, key));
+    } catch (e) {
+      console.warn("[EyeNetra:voice] audio meter unavailable", e);
+    }
   }, []);
 
   const connect = useCallback(async () => {
     if (clientRef.current) return;
-    setStatus("connecting");
-    setErrorMessage(null);
-    botBufferRef.current = "";
+    const set = useVoiceStore.setState;
+    set({
+      status: "connecting",
+      phase: "connecting",
+      errorMessage: null,
+      userInterim: "",
+      botCaption: "",
+      ended: false,
+    });
+    botLineIdRef.current = null;
+
+    const pushLine = (role: TranscriptLine["role"], text: string) => {
+      const id = ++lineIdRef.current;
+      set((s) => ({ transcript: [...s.transcript, { id, role, text }] }));
+      return id;
+    };
 
     const transport = new SmallWebRTCTransport();
     const client = new PipecatClient({
@@ -74,11 +128,15 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       enableMic: true,
       enableCam: false,
       callbacks: {
-        onConnected: () => setStatus("connected"),
+        onConnected: () => {
+          set({ status: "connected", phase: "listening" });
+          const mic = client.tracks().local.audio;
+          if (mic) meter(mic, "mic");
+        },
         onDisconnected: () => {
           clientRef.current = null;
           releaseAudio();
-          setStatus("idle");
+          set({ status: "idle", phase: "off", userInterim: "" });
         },
         onError: (msg) => {
           const data = msg.data as Record<string, unknown> | string | undefined;
@@ -87,25 +145,33 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
               ? data
               : data?.error ?? data?.message ?? (data ? JSON.stringify(data) : null);
           const fatal = typeof data === "object" && data?.fatal === true;
-          setErrorMessage(text ? String(text) : "Voice agent error");
           // Non-fatal pipeline errors (e.g. one LLM call failing) leave the
           // call, mic and audio up — keep "connected" so the UI doesn't lie.
-          setStatus((prev) => (prev === "connected" && !fatal ? prev : "error"));
+          set((s) =>
+            s.status === "connected" && !fatal
+              ? { errorMessage: text ? String(text) : "Voice agent error" }
+              : { errorMessage: text ? String(text) : "Voice agent error", status: "error", phase: "error" },
+          );
         },
-        onBotStartedSpeaking: () => setBotSpeaking(true),
-        onBotStoppedSpeaking: () => setBotSpeaking(false),
+        onUserStartedSpeaking: () => set({ phase: "user" }),
+        onUserStoppedSpeaking: () =>
+          set((s) => (s.phase === "user" ? { phase: "thinking" } : {})),
+        onBotStartedSpeaking: () => set({ phase: "speaking" }),
+        onBotStoppedSpeaking: () =>
+          set((s) => (s.phase === "speaking" ? { phase: "listening" } : {})),
         // The bot's audio arrives as a remote WebRTC track — the transport
         // emits it but nothing plays it until we attach it to an <audio>.
-        onTrackStarted: (track: MediaStreamTrack) => {
-          if (track.kind !== "audio") return;
+        onTrackStarted: (track: MediaStreamTrack, participant) => {
+          if (track.kind !== "audio" || participant?.local) return;
           const el = document.createElement("audio");
           el.autoplay = true;
           el.setAttribute("playsinline", "true");
           el.srcObject = new MediaStream([track]);
           audioElsRef.current.push(el);
           el.play().catch((e) =>
-            setErrorMessage(`Browser blocked audio playback: ${e.message}`),
+            set({ errorMessage: `Browser blocked audio playback: ${e.message}` }),
           );
+          meter(track, "bot");
         },
         onTrackStopped: (track: MediaStreamTrack) => {
           audioElsRef.current = audioElsRef.current.filter((el) => {
@@ -119,45 +185,57 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
           });
         },
         onUserTranscript: (data: TranscriptData) => {
-          if (!data.final || !data.text?.trim()) return;
-          // New turn — seal the bot's last reply.
-          botBufferRef.current = "";
+          const text = data.text?.trim() ?? "";
+          if (!data.final) {
+            if (text) set({ userInterim: text });
+            return;
+          }
+          set({ userInterim: "" });
+          if (!text) return;
+          // New customer turn — seal the bot's last reply.
           botLineIdRef.current = null;
-          const id = ++lineIdRef.current;
-          setTranscript((t) => [...t, { id, role: "user", text: data.text.trim() }]);
+          pushLine("user", text);
         },
-        // LLM text arrives as raw token chunks whose boundaries are NOT word
-        // boundaries ("Z" + "aroor"); tokens carry their own leading spaces,
-        // so concatenate verbatim. One transcript line per bot turn: the line
-        // id is allocated OUTSIDE the state updater (React runs updaters
-        // twice in dev, which previously forked a new line per chunk).
-        onBotLlmText: (data: BotLLMTextData) => {
+        // What TTS actually speaks — includes the Flows fixed lines
+        // (tts_say), which never pass through the LLM, so captions and
+        // transcript follow the audio rather than the model's tokens.
+        onBotTtsText: (data: BotTTSTextData) => {
           if (!data.text) return;
-          botBufferRef.current += data.text;
-          const current = botBufferRef.current;
           if (botLineIdRef.current == null) {
-            botLineIdRef.current = ++lineIdRef.current;
+            botLineIdRef.current = pushLine("bot", "");
+            set({ botCaption: "" });
           }
           const lineId = botLineIdRef.current;
-          setTranscript((t) => {
-            const idx = t.findIndex((l) => l.id === lineId);
-            if (idx >= 0) {
-              const next = t.slice();
-              next[idx] = { ...t[idx], text: current };
-              return next;
-            }
-            return [...t, { id: lineId, role: "bot", text: current }];
+          set((s) => {
+            const idx = s.transcript.findIndex((l) => l.id === lineId);
+            const caption = joinSpoken(s.botCaption, data.text);
+            if (idx < 0) return { botCaption: caption };
+            const transcript = s.transcript.slice();
+            transcript[idx] = { ...s.transcript[idx], text: joinSpoken(s.transcript[idx].text, data.text) };
+            return { transcript, botCaption: caption };
           });
         },
         onServerMessage: (data: unknown) => {
-          const msg = data as Partial<TryOnSuggestion> | null;
-          if (msg?.kind !== "try_on_frame") return;
-          const suggestion = msg as TryOnSuggestion;
-          setSuggestions((s) =>
-            s.some((x) => x.sku === suggestion.sku) ? s : [...s, suggestion],
-          );
-          setActiveSku(suggestion.sku);
-          onTryOnFrameRef.current?.(suggestion);
+          const msg = data as { kind?: string; sku?: string } | null;
+          if (msg?.kind === "try_on_frame") {
+            const suggestion = msg as TryOnSuggestion;
+            set((s) => ({
+              suggestions: s.suggestions.some((x) => x.sku === suggestion.sku)
+                ? s.suggestions.map((x) => (x.sku === suggestion.sku ? suggestion : x))
+                : [...s.suggestions, suggestion],
+              activeSku: suggestion.sku,
+              dropSeq: s.dropSeq + 1,
+            }));
+            onTryOnFrameRef.current?.(suggestion);
+          } else if (msg?.kind === "liked" && msg.sku) {
+            const sku = msg.sku;
+            set((s) => ({
+              picks: s.picks.includes(sku) ? s.picks : [...s.picks, sku],
+              likeSeq: s.likeSeq + 1,
+            }));
+          } else if (msg?.kind === "session_end") {
+            set({ ended: true });
+          }
         },
       },
     });
@@ -167,15 +245,19 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       await client.connect({ webrtcRequestParams: { endpoint } });
     } catch (e) {
       clientRef.current = null;
-      setStatus("error");
-      setErrorMessage(e instanceof Error ? e.message : "Could not reach the voice agent");
+      releaseAudio();
+      set({
+        status: "error",
+        phase: "error",
+        errorMessage: e instanceof Error ? e.message : "Could not reach the voice agent",
+      });
       try {
         await client.disconnect();
       } catch {
         // already failed — nothing to clean up
       }
     }
-  }, [endpoint]);
+  }, [endpoint, meter, releaseAudio]);
 
   const disconnect = useCallback(async () => {
     const client = clientRef.current;
@@ -188,8 +270,16 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         // best-effort disconnect
       }
     }
-    setStatus("idle");
+    useVoiceStore.setState({ status: "idle", phase: "off", userInterim: "" });
   }, [releaseAudio]);
+
+  // Expose connect/disconnect to every component through the store.
+  useEffect(() => {
+    useVoiceStore.setState({
+      connect: () => void connect(),
+      disconnect: () => void disconnect(),
+    });
+  }, [connect, disconnect]);
 
   // Leave no live WebRTC connection (or held mic) behind on unmount.
   useEffect(() => {
@@ -199,22 +289,17 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       releaseAudio();
     };
   }, [releaseAudio]);
+}
 
-  const clearSuggestions = useCallback(() => {
-    setSuggestions([]);
-    setActiveSku(null);
-  }, []);
-
-  return {
-    status,
-    errorMessage,
-    transcript,
-    suggestions,
-    activeSku,
-    setActiveSku,
-    botSpeaking,
-    connect,
-    disconnect,
-    clearSuggestions,
-  };
+/** Clear the shortlist and picks for the next customer. */
+export function resetVoiceSession() {
+  useVoiceStore.setState({
+    transcript: [],
+    suggestions: [],
+    activeSku: null,
+    picks: [],
+    userInterim: "",
+    botCaption: "",
+    ended: false,
+  });
 }
