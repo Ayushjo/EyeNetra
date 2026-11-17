@@ -1,41 +1,27 @@
 import { TryOnStage } from "@/components/TryOnStage";
 import { VoiceAgentPanel, VoiceSession } from "@/components/VoiceAgentPanel";
+import { E2EHarness } from "@/components/dev/E2EHarness";
 
 export default function Home() {
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-10 sm:px-8">
       <div className="mx-auto flex max-w-4xl flex-col gap-6">
-        <header className="space-y-2">
-          <p className="text-sm font-medium uppercase tracking-[0.18em] text-zinc-500">
-            EyeNetra
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-            Virtual eyewear try-on
-          </h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 sm:text-base">
-            Real-time webcam AR with MediaPipe face tracking, metric scale from
-            iris diameter, PBR frames, HDRI lighting, and temple occlusion.
-          </p>
+        <header className="flex items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">EyeNetra</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">
+              चश्मा पहनकर देखिए
+            </h1>
+          </div>
+          <p className="hidden text-sm text-zinc-500 sm:block">बोलिए, और फ्रेम सीधे आपके चेहरे पर</p>
         </header>
 
+        <E2EHarness />
         <VoiceSession />
         <TryOnStage />
 
         <VoiceAgentPanel />
 
-        <aside className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600">
-          <p className="font-medium text-zinc-800">How to test</p>
-          <ol className="mt-2 list-decimal space-y-1 pl-5">
-            <li>Enable camera — mirrored feed should appear.</li>
-            <li>Wait for the face model to load — glasses should lock to your face.</li>
-            <li>Turn your head ¾ — temple arms should tuck behind via occlusion.</li>
-            <li>Swap frames/colors in the picker; tune smoothing if needed.</li>
-            <li>
-              Talk to the assistant (needs <code className="rounded bg-zinc-100 px-1">voice_agent/bot.py</code> running) —
-              frames it suggests appear on your face while you keep talking.
-            </li>
-          </ol>
-        </aside>
       </div>
     </main>
   );

@@ -699,3 +699,26 @@ useGLTF.preload("/models/aviator-sunglasses.glb");
 useGLTF.preload("/models/glasses-round-frame.glb");
 useGLTF.preload("/models/sport-glasses-b307.glb");
 useGLTF.preload("/models/ai-generated-frames.glb");
+
+/**
+ * Warm the GLTF cache with every catalogue frame, one file per idle slot, so
+ * a frame the voice assistant picks is already parsed when it is shown
+ * (measured: an uncached swap left the face without glasses until the file
+ * loaded). Order: FRAMES order (the four showroom
+ * models are already preloaded above).
+ */
+export function preloadCatalogueModels(paths: string[]) {
+  if (typeof window === "undefined") return;
+  const queue = [...new Set(paths)];
+  const idle: (cb: () => void) => void =
+    "requestIdleCallback" in window
+      ? (cb) => window.requestIdleCallback(cb, { timeout: 2000 })
+      : (cb) => setTimeout(cb, 200);
+  const next = () => {
+    const path = queue.shift();
+    if (!path) return;
+    useGLTF.preload(path);
+    idle(next);
+  };
+  idle(next);
+}

@@ -52,9 +52,11 @@ export function TryOnControls({
         <span className="ml-auto text-xs text-zinc-500">
           {trackingStatus === "loading" && "Loading face model…"}
           {trackingStatus === "ready" &&
-            `${fps || "—"} fps · ${hasFace ? "face locked" : "looking for face"}`}
+            (hasFace ? "✓ चेहरा मिल गया" : "कैमरे की तरफ़ देखिए")}
+          {trackingStatus === "ready" && showDevControls
+            ? ` · ${fps || "—"} fps${isMobilePerfMode ? " · mobile perf" : ""}`
+            : ""}
           {trackingStatus === "error" && (trackingError ?? "Tracking error")}
-          {isMobilePerfMode ? " · mobile perf" : ""}
         </span>
         <label className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
           <input

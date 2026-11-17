@@ -134,7 +134,8 @@ function compile(gl: WebGLRenderingContext, type: number, src: string) {
   return s;
 }
 
-export function VoiceOrb({ size = 120, className = "" }: { size?: number; className?: string }) {
+/** Size: pass `size` (px) or size it with className (e.g. responsive w-/h-). */
+export function VoiceOrb({ size, className = "" }: { size?: number; className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -220,7 +221,7 @@ export function VoiceOrb({ size = 120, className = "" }: { size?: number; classN
     <canvas
       ref={canvasRef}
       className={className}
-      style={{ width: size, height: size }}
+      style={size ? { width: size, height: size } : undefined}
       aria-hidden
     />
   );

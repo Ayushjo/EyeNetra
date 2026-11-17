@@ -31,6 +31,17 @@ export function VoiceCaptions() {
     return null;
   });
   const [visible, setVisible] = useState(false);
+  // Phones: the mirror is short, so captions keep only the newest words
+  // (≈2 lines) and sit low — the face must stay visible while the
+  // assistant announces the frame on it.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
 
   const userTalking = phase === "user" || (phase === "thinking" && !!userInterim);
   // Thinking without interim: keep showing what we heard, so the customer
@@ -50,18 +61,18 @@ export function VoiceCaptions() {
 
   if (phase === "off" || !text) return null;
   const all = text.split(" ");
-  const start = tailStart(all, 110);
+  const start = tailStart(all, narrow ? 56 : 110);
   const words = all.slice(start);
 
   return (
     <div
-      className={`pointer-events-none absolute inset-x-0 bottom-24 z-40 flex justify-center px-6 transition-opacity duration-500 sm:bottom-28 ${
+      className={`pointer-events-none absolute inset-x-0 bottom-[60px] z-40 flex justify-center px-3 transition-opacity duration-500 sm:bottom-28 sm:px-6 ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       aria-live="polite"
     >
       <p
-        className={`max-w-2xl rounded-2xl px-5 py-3 text-center text-lg leading-snug shadow-[0_8px_40px_rgba(0,0,0,0.35)] backdrop-blur-md sm:text-2xl ${
+        className={`max-w-2xl rounded-xl px-3 py-1.5 text-center text-sm leading-snug shadow-[0_8px_40px_rgba(0,0,0,0.35)] backdrop-blur-md sm:rounded-2xl sm:px-5 sm:py-3 sm:text-2xl ${
           showUser ? "bg-black/35 text-white/75 italic" : "bg-black/50 font-medium text-white"
         }`}
       >

@@ -38,7 +38,8 @@ function OrbButton() {
         aria-label={live ? "End conversation" : "Talk to the assistant"}
         title={live ? "End conversation" : "Talk to the assistant"}
       >
-        <VoiceOrb size={112} className="transition-transform duration-300 group-hover:scale-105 group-active:scale-95" />
+        {/* 72 px on phones so it never covers the face; 112 px on larger screens. */}
+        <VoiceOrb className="h-[72px] w-[72px] transition-transform duration-300 group-hover:scale-105 group-active:scale-95 sm:h-28 sm:w-28" />
         {phase === "off" ? (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <svg viewBox="0 0 24 24" className="h-7 w-7 text-white/90 drop-shadow" fill="currentColor" aria-hidden>
@@ -170,7 +171,7 @@ function ShortlistStrip() {
 
   if (suggestions.length === 0) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-3 left-3 right-36 z-40 sm:bottom-4 sm:left-4">
+    <div className="pointer-events-auto absolute bottom-3 left-3 right-24 z-40 sm:bottom-4 sm:left-4 sm:right-36">
       <div
         ref={scrollRef}
         className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -230,19 +231,18 @@ function IdleAttract() {
   const suggestions = useVoiceStore((s) => s.suggestions.length);
   if (phase !== "off" || suggestions > 0) return null;
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col items-center pt-6 text-center sm:pt-10">
-      <div className="flex gap-6 opacity-70">
+    // Kept to a slim band at the top: the face (centre of the mirror) must
+    // stay visible, on a phone too.
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col items-center pt-3 text-center sm:pt-6">
+      <div className="hidden gap-6 opacity-70 sm:flex">
         {["aviator", "round", "cat-eye"].map((shape, i) => (
           <span key={shape} className="idle-float" style={{ animationDelay: `${i * 0.8}s` }}>
             <FrameGlyph shape={shape} color="#fcd9a0" className="h-6 w-12 sm:h-8 sm:w-16" />
           </span>
         ))}
       </div>
-      <p className="mt-3 rounded-2xl bg-black/35 px-5 py-2 text-xl font-semibold text-white shadow-lg backdrop-blur-md sm:text-3xl">
-        नमस्ते! 👋
-      </p>
-      <p className="mt-2 rounded-full bg-black/35 px-4 py-1 text-sm text-white/85 backdrop-blur-md sm:text-base">
-        नीचे वाला गोला दबाइए और बोलिए — मैं आपके लिए फ्रेम पहनाकर दिखाऊँगा
+      <p className="rounded-full bg-black/40 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur-md sm:mt-2 sm:px-5 sm:text-lg">
+        नमस्ते! 👋 <span className="font-normal text-white/85">गोला दबाइए और बोलिए</span>
       </p>
     </div>
   );

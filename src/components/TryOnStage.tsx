@@ -115,7 +115,7 @@ export function TryOnStage() {
             <LandmarkOverlay />
             <TryOnCanvas />
             <VoiceStageOverlay />
-            <div className="pointer-events-none absolute left-4 top-4 z-30 rounded-md bg-black/55 px-3 py-1.5 text-xs font-medium tracking-wide text-white">
+            <div className="pointer-events-none absolute left-4 top-4 z-30 hidden rounded-md sm:block bg-black/55 px-3 py-1.5 text-xs font-medium tracking-wide text-white">
               {trackingStatus === "loading"
                 ? "Loading face tracker…"
                 : "Live try-on"}

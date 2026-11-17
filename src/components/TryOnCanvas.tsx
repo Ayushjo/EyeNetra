@@ -7,7 +7,7 @@ import {
   OrthographicCamera,
   PerspectiveCamera,
 } from "@react-three/drei";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AxesHelper,
@@ -16,11 +16,12 @@ import {
   SRGBColorSpace,
   Vector3,
 } from "three";
-import { GlassesModel, type PivotDebug } from "@/components/GlassesModel";
+import { GlassesModel, preloadCatalogueModels, type PivotDebug } from "@/components/GlassesModel";
 import { FaceMeshOccluder } from "@/components/FaceMeshOccluder";
 import { VideoBackground } from "@/components/VideoBackground";
 import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
+import { FRAMES, getFrameById } from "@/data/frames";
 
 /**
  * Option (b): parent anchor receives matrix pose each frame; glasses mesh is a
@@ -33,11 +34,16 @@ function GlassesAnchor() {
   useFitEngine(anchorRef);
 
   const renderMode = useTryOnStore((s) => s.renderMode);
-  const frameId = useTryOnStore((s) => s.selectedFrameId);
-  const variantId = useTryOnStore((s) => s.selectedVariantId);
+  const selectedFrameId = useTryOnStore((s) => s.selectedFrameId);
+  const selectedVariantId = useTryOnStore((s) => s.selectedVariantId);
   const showFitDebug = useTryOnStore((s) => s.showFitDebug);
-  const frame = useTryOnStore((s) => s.selectedFrame());
-  const variant = useTryOnStore((s) => s.selectedVariant());
+  // Deferred selection: when the assistant (or a tap) switches frames, React
+  // keeps rendering the CURRENT glasses until the new GLB has loaded instead
+  // of showing the Suspense fallback (no glasses) in between.
+  const shownKey = useDeferredValue(`${selectedFrameId}|${selectedVariantId}`);
+  const [frameId, variantId] = shownKey.split("|");
+  const frame = getFrameById(frameId);
+  const variant = frame.variants.find((v) => v.id === variantId) ?? frame.variants[0];
 
   const [localOffset] = useState(() => new Vector3(0, 0, 0));
   const axesRef = useRef<AxesHelper | null>(null);
@@ -223,6 +229,9 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
   // context otherwise leaves the last frame on screen forever (live: glasses
   // frozen beside the face while tracking kept running).
   const [canvasKey, setCanvasKey] = useState(0);
+  useEffect(() => {
+    preloadCatalogueModels(FRAMES.map((f) => f.glbPath));
+  }, []);
   return (
     <div className={`pointer-events-none absolute inset-0 z-20 ${className}`}>
       <Canvas
