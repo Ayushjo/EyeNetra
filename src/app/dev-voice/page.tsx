@@ -31,6 +31,25 @@ export default function DevVoice() {
       connect: () => useVoiceStore.setState({ phase: "listening", status: "connected" }),
       disconnect: () => useVoiceStore.setState({ phase: "off", status: "idle" }),
     });
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("phase") as VoicePhase | null;
+    if (p) useVoiceStore.setState({ phase: p, status: p === "off" ? "idle" : "connected" });
+    if (params.has("scene")) {
+      useVoiceStore.setState((s) => ({
+        status: "connected",
+        phase: "speaking",
+        suggestions: DEMO.map((d, i) => ({ kind: "try_on_frame" as const, ...d, index: i, total: DEMO.length })),
+        activeSku: DEMO[0].sku,
+        picks: [DEMO[1].sku],
+        dropSeq: s.dropSeq + 1,
+        likeSeq: s.likeSeq + 1,
+        transcript: [
+          { id: 1, role: "user", text: "मुझे हल्का रोज़ पहनने वाला चश्मा दिखाओ" },
+          { id: 2, role: "bot", text: "यह रहा Vincent Chase का Classic Aviator" },
+        ],
+        botCaption: "यह रहा Vincent Chase का Classic Aviator, बारह सौ रुपये — पसंद आया?",
+      }));
+    }
     return () => cancelAnimationFrame(raf);
   }, []);
 
@@ -51,28 +70,31 @@ export default function DevVoice() {
     }));
   };
 
+  const btn = "rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50";
+
   return (
-    <main className="min-h-screen bg-zinc-900 p-6">
-      <div className="mb-4 flex flex-wrap gap-2">
+    <main className="min-h-screen bg-zinc-50 p-6">
+      <div className="mx-auto mb-4 flex max-w-4xl flex-wrap items-center gap-2">
         {(["off", "connecting", "listening", "user", "thinking", "speaking", "error"] as VoicePhase[]).map((p) => (
-          <button key={p} onClick={() => setPhase(p)} className="rounded bg-white/10 px-3 py-1 text-sm text-white">
+          <button key={p} onClick={() => setPhase(p)} className={btn}>
             {p}
           </button>
         ))}
+        <span className="mx-1 h-4 w-px bg-zinc-300" aria-hidden />
         <button
           onClick={() => useVoiceStore.setState({ phase: "user", userInterim: "मुझे गोल वाला चश्मा दिखाओ" })}
-          className="rounded bg-teal-600 px-3 py-1 text-sm text-white"
+          className={btn}
         >
           user caption
         </button>
         <button
           onClick={() => say("यह रहा Vincent Chase का Classic Aviator, बारह सौ रुपये। स्क्रीन पर अपने चेहरे पर देखिए। पसंद आया, या अगला दिखाऊँ?")}
-          className="rounded bg-amber-600 px-3 py-1 text-sm text-white"
+          className={btn}
         >
           bot says
         </button>
         {DEMO.map((d, i) => (
-          <button key={d.sku} onClick={() => drop(i)} className="rounded bg-violet-600 px-3 py-1 text-sm text-white">
+          <button key={d.sku} onClick={() => drop(i)} className={btn}>
             drop {d.shape}
           </button>
         ))}
@@ -80,12 +102,12 @@ export default function DevVoice() {
           onClick={() =>
             useVoiceStore.setState((s) => ({ picks: s.activeSku ? [...s.picks, s.activeSku] : s.picks, likeSeq: s.likeSeq + 1 }))
           }
-          className="rounded bg-pink-600 px-3 py-1 text-sm text-white"
+          className={btn}
         >
           like
         </button>
       </div>
-      <div className="relative mx-auto aspect-[4/3] w-full max-w-4xl overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-800">
+      <div className="relative mx-auto aspect-[4/3] w-full max-w-4xl overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-500 to-zinc-700 ring-1 ring-zinc-200">
         <VoiceStageOverlay />
       </div>
     </main>

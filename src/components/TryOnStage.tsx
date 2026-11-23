@@ -36,9 +36,9 @@ function StatusPanel({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl bg-white/90 px-8 py-10 text-center shadow-lg backdrop-blur-sm">
+    <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl bg-white px-8 py-10 text-center shadow-lg">
       <h2 className="text-xl font-semibold tracking-tight text-zinc-900">{title}</h2>
-      <p className="text-sm leading-relaxed text-zinc-600">{body}</p>
+      <p className="text-sm leading-relaxed text-zinc-500">{body}</p>
       {actionLabel && onAction ? (
         <button
           type="button"
@@ -101,7 +101,7 @@ export function TryOnStage() {
       <div
         id="tryon-stage"
         ref={stageRef}
-        className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-zinc-900 shadow-xl ring-1 ring-zinc-200"
+        className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-zinc-100 shadow-sm ring-1 ring-zinc-200"
         style={{ aspectRatio: `${stageAspect}` }}
       >
         {/* Always mounted so getUserMedia can attach before ready UI. */}
@@ -115,15 +115,10 @@ export function TryOnStage() {
             <LandmarkOverlay />
             <TryOnCanvas />
             <VoiceStageOverlay />
-            <div className="pointer-events-none absolute left-4 top-4 z-30 hidden rounded-md sm:block bg-black/55 px-3 py-1.5 text-xs font-medium tracking-wide text-white">
-              {trackingStatus === "loading"
-                ? "Loading face tracker…"
-                : "Live try-on"}
-            </div>
             {trackingStatus === "loading" ? (
-              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/35">
-                <div className="rounded-xl bg-white px-5 py-4 text-sm text-zinc-800 shadow-lg">
-                  Loading MediaPipe WASM + face model…
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/40 backdrop-blur-[2px]">
+                <div className="rounded-xl bg-white px-5 py-4 text-sm text-zinc-700 shadow-lg ring-1 ring-zinc-200">
+                  Loading face tracker…
                 </div>
               </div>
             ) : null}
@@ -131,7 +126,7 @@ export function TryOnStage() {
         ) : null}
 
         {status !== "ready" ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-gradient-to-br from-zinc-100 to-zinc-200 p-6">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-50 p-6">
             {status === "idle" ? (
               <StatusPanel
                 title="Virtual try-on"
@@ -178,7 +173,7 @@ export function TryOnStage() {
         ) : null}
 
         {status === "ready" && webglBlocked ? (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-zinc-900/80 p-6">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-zinc-900/60 p-6">
             <StatusPanel
               title="WebGL2 required"
               body="This try-on needs WebGL2 for 3D frame rendering. Try updating your browser or enabling hardware acceleration."

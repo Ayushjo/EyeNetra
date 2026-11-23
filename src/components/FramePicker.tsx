@@ -13,7 +13,7 @@ export function FramePicker() {
   return (
     <div className="space-y-4">
       <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
           Frames
         </p>
         <div className="flex gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -27,7 +27,7 @@ export function FramePicker() {
                 className={`flex min-w-[7.5rem] shrink-0 flex-col items-start gap-2 rounded-xl border px-3 py-3 text-left transition ${
                   active
                     ? "border-zinc-900 bg-zinc-900 text-white"
-                    : "border-zinc-200 bg-white text-zinc-800 hover:border-zinc-400"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400"
                 }`}
               >
                 <span
@@ -37,7 +37,7 @@ export function FramePicker() {
                 />
                 <span className="text-sm font-medium">{f.name}</span>
                 <span
-                  className={`text-[11px] ${active ? "text-zinc-300" : "text-zinc-500"}`}
+                  className={`text-[11px] ${active ? "text-zinc-300" : "text-zinc-400"}`}
                 >
                   {f.fit.frameWidthMm}mm
                 </span>
@@ -48,8 +48,8 @@ export function FramePicker() {
       </div>
 
       <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
-          Color
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
+          Colour
         </p>
         <div className="flex flex-wrap gap-2">
           {frame.variants.map((v) => {
@@ -61,8 +61,8 @@ export function FramePicker() {
                 onClick={() => setVariant(v.id)}
                 className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
                   active
-                    ? "border-zinc-900 bg-zinc-100"
-                    : "border-zinc-200 bg-white hover:border-zinc-400"
+                    ? "border-zinc-900 bg-zinc-50 text-zinc-900"
+                    : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-400"
                 }`}
               >
                 <span

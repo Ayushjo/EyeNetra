@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
+  --background: #ffffff;
   --foreground: #18181b;
 }
 
@@ -20,47 +20,57 @@ body {
 
 /* Voice assistant — captions: each newly spoken word fades/rises in. */
 @keyframes caption-word-in {
-  from { opacity: 0; transform: translateY(0.25em); filter: blur(3px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: 0; transform: translateY(0.25em); }
+  to { opacity: 1; transform: none; }
 }
 .caption-word {
   display: inline-block;
   white-space: pre;
-  animation: caption-word-in 260ms ease-out both;
+  animation: caption-word-in 240ms ease-out both;
 }
 
 /* Frame drop: card flies from the orb toward the face, then settles. */
 @keyframes frame-drop {
-  0% { opacity: 0; transform: translate(var(--drop-x, 40vw), var(--drop-y, 30vh)) scale(0.3) rotate(-8deg); }
-  55% { opacity: 1; transform: translate(0, -6px) scale(1.04) rotate(1deg); }
-  75% { transform: translate(0, 2px) scale(0.99); }
+  0% { opacity: 0; transform: translate(var(--drop-x, 0), var(--drop-y, 30vh)) scale(0.4); }
+  60% { opacity: 1; transform: translate(0, -4px) scale(1.02); }
   100% { opacity: 1; transform: none; }
 }
-.frame-drop { animation: frame-drop 760ms cubic-bezier(0.2, 0.9, 0.25, 1.05) both; }
+.frame-drop { animation: frame-drop 640ms cubic-bezier(0.2, 0.9, 0.25, 1.02) both; }
 
 /* Flash around the face when a new frame lands. */
 @keyframes face-flash {
   0% { opacity: 0; transform: scale(0.85); }
-  30% { opacity: 0.9; }
-  100% { opacity: 0; transform: scale(1.25); }
+  30% { opacity: 0.7; }
+  100% { opacity: 0; transform: scale(1.2); }
 }
-.face-flash { animation: face-flash 900ms ease-out both; }
+.face-flash { animation: face-flash 800ms ease-out both; }
 
-/* Heart burst on "ye pasand hai". */
-@keyframes heart-pop {
-  0% { opacity: 0; transform: translate(0, 0) scale(0.2); }
-  20% { opacity: 1; transform: translate(0, -10px) scale(1.2); }
-  100% { opacity: 0; transform: translate(var(--hx, 0px), -160px) scale(0.8) rotate(var(--hr, 0deg)); }
+/* One heart drifting up on "ye pasand hai" — quiet, not confetti. */
+@keyframes like-float {
+  0% { opacity: 0; transform: translate(-50%, 4px) scale(0.7); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -64px) scale(1); }
 }
-.heart-pop { animation: heart-pop 1400ms ease-out both; }
+.like-float { animation: like-float 1300ms ease-out both; }
 
-/* Idle attract screen: slow drift of the sample frames. */
-@keyframes idle-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+/* Countdown hairline under the frame-drop card (matches the 8 s lifetime). */
+@keyframes drop-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
 }
-.idle-float { animation: idle-float 5s ease-in-out infinite; }
+.drop-progress {
+  animation: drop-progress 8s linear both;
+  transform-origin: left center;
+}
+
+/* Idle orb invitation: one soft ring expanding outward. */
+@keyframes orb-ping {
+  0% { opacity: 0.5; transform: scale(0.8); }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+.orb-ping { animation: orb-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .caption-word, .frame-drop, .face-flash, .heart-pop, .idle-float { animation: none; }
+  .caption-word, .frame-drop, .face-flash, .like-float,
+  .orb-ping, .drop-progress { animation: none; }
 }

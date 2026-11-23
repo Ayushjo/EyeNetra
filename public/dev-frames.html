@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Frame Viewer</title>
+<style>body{margin:0;background:#d9d4cc;font:12px sans-serif}#g{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}canvas{width:100%;display:block}.c{position:relative}.c span{position:absolute;left:6px;top:4px}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script></head>
+<body><div id="g"></div><script type="module">
+import * as THREE from "three"; import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js"; import {RoomEnvironment} from "three/addons/environments/RoomEnvironment.js";
+const ids=new URLSearchParams(location.search).get("ids")?.split(",")??["r-wayfarer","r-wayfarer-tort","r-browline","r-round-metal","r-aviator","r-office-rect","r-bold-square","r-bold-square-tort","r-panto-tort","r-cateye","r-hex-metal","r-slim-metal"];
+const yaw=parseFloat(new URLSearchParams(location.search).get("yaw")??"0.5");
+const dir=new URLSearchParams(location.search).get("dir")??"real";
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true}); r.setSize(320,220); r.toneMapping=THREE.ACESFilmicToneMapping;
+const pm=new THREE.PMREMGenerator(r); const env=pm.fromScene(new RoomEnvironment(),0.04).texture;
+const L=new GLTFLoader();
+for(const id of ids){ const g=await L.loadAsync(`/models/${dir}/${id}.glb`); const sc=new THREE.Scene(); sc.environment=env; sc.background=new THREE.Color(0xd9d4cc);
+ const o=g.scene; const bb=new THREE.Box3().setFromObject(o); const sz=bb.getSize(new THREE.Vector3()); const k=150/sz.x; o.scale.setScalar(k); const c=bb.getCenter(new THREE.Vector3()).multiplyScalar(k); o.position.sub(c); o.rotation.y=yaw; o.rotation.x=0.12; sc.add(o); sc.add(new THREE.DirectionalLight(0xffffff,1.5));
+ const cam=new THREE.PerspectiveCamera(30,320/220,1,2000); cam.position.set(0,10,330); cam.lookAt(0,0,-30);
+ r.render(sc,cam); const d=document.createElement("div"); d.className="c"; const im=new Image(); im.src=r.domElement.toDataURL(); im.style.width="100%"; d.append(im); const s=document.createElement("span"); s.textContent=id; d.append(s); document.getElementById("g").append(d);}
+</script></body></html>

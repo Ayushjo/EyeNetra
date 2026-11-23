@@ -37,7 +37,7 @@ function PicksTray() {
   if (liked.length === 0) return null;
   return (
     <div>
-      <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-amber-200/80">
+      <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
         आपकी पसंद · Your picks
       </p>
       <div className="flex flex-wrap gap-2">
@@ -46,12 +46,12 @@ function PicksTray() {
             key={s.sku}
             type="button"
             onClick={() => showSuggestionOnFace(s)}
-            className="flex items-center gap-3 rounded-xl border border-amber-200/30 bg-amber-200/10 px-3 py-2 text-left transition hover:bg-amber-200/20"
+            className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-left transition hover:border-zinc-300 hover:bg-white"
           >
-            <FrameGlyph shape={s.shape} color="#fcd9a0" className="h-7 w-14" />
+            <FrameGlyph shape={s.shape} color="#52525b" className="h-7 w-14" />
             <span className="leading-tight">
-              <span className="block text-sm font-medium text-white">{s.name}</span>
-              <span className="block text-xs text-white/60">
+              <span className="block text-sm font-medium text-zinc-900">{s.name}</span>
+              <span className="block text-xs text-zinc-500">
                 {s.brand} {s.price != null ? `· ${formatRupees(s.price)}` : ""}
               </span>
             </span>
@@ -70,9 +70,9 @@ function SessionSummary() {
   const disconnect = useVoiceStore((s) => s.disconnect);
   if (!ended || suggestions.length === 0) return null;
   return (
-    <div className="rounded-2xl border border-teal-300/20 bg-gradient-to-br from-teal-400/10 to-amber-300/10 p-4">
-      <p className="text-base font-semibold text-white">धन्यवाद! 🙏</p>
-      <p className="mt-1 text-sm text-white/70">
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+      <p className="text-base font-semibold text-zinc-900">धन्यवाद</p>
+      <p className="mt-1 text-sm text-zinc-600">
         आपने {suggestions.length} फ्रेम देखे
         {picks.length ? `, ${picks.length} पसंद आए` : ""}. हमारे executive आपकी मदद करेंगे।
       </p>
@@ -82,7 +82,7 @@ function SessionSummary() {
           disconnect();
           resetVoiceSession();
         }}
-        className="mt-3 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+        className="mt-3 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
       >
         नया ग्राहक · Next customer
       </button>
@@ -115,40 +115,38 @@ export function VoiceAgentPanel() {
   const connected = status === "connected";
   const busy = status === "connecting";
   const dot =
-    phase === "speaking"
-      ? "bg-amber-300 animate-pulse"
+    phase === "speaking" || phase === "user"
+      ? "bg-indigo-500 animate-pulse"
       : phase === "thinking"
         ? "bg-violet-400 animate-pulse"
-        : phase === "user"
-          ? "bg-teal-300 animate-pulse"
-          : connected
-            ? "bg-teal-400"
-            : status === "error"
-              ? "bg-red-500"
-              : "bg-zinc-500";
+        : connected
+          ? "bg-emerald-500"
+          : status === "error"
+            ? "bg-rose-500"
+            : "bg-zinc-300";
 
   return (
     <section
       id="voice"
-      className="space-y-4 rounded-2xl border border-white/10 bg-zinc-950 p-4 text-white shadow-xl"
+      className="space-y-4 rounded-xl border border-zinc-200 bg-white p-4"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 rounded-full ${dot}`} aria-hidden />
+          <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden />
           <div>
-            <p className="text-sm font-medium">
-              Eyenetra assistant
-              <span className="ml-2 text-white/50">
+            <p className="text-sm font-medium text-zinc-900">
+              Voice assistant
+              <span className="ml-2 text-xs font-normal text-zinc-400">
                 {busy ? "connecting…" : connected ? "live" : status === "error" ? "error" : "off"}
               </span>
             </p>
             {errorMessage ? (
-              <p className="text-xs text-red-400">{errorMessage}</p>
+              <p className="text-xs text-rose-600">{errorMessage}</p>
             ) : (
-              <p className="text-xs text-white/50">
+              <p className="text-xs text-zinc-400">
                 {connected
                   ? "हिंदी, Hinglish या English में बोलिए — फ्रेम सीधे आपके चेहरे पर दिखेंगे।"
-                  : "Tap the orb on the mirror, or here, and allow the microphone."}
+                  : "Tap the sphere on the mirror, or here, and allow the microphone."}
               </p>
             )}
           </div>
@@ -158,7 +156,9 @@ export function VoiceAgentPanel() {
           onClick={() => (connected ? disconnect() : connect())}
           disabled={busy}
           className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
-            connected ? "bg-white/10 hover:bg-white/20" : "bg-teal-400 text-zinc-950 hover:bg-teal-300"
+            connected
+              ? "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+              : "bg-zinc-900 text-white hover:bg-zinc-700"
           }`}
         >
           {busy ? "Connecting…" : connected ? "End" : "Talk"}
@@ -168,27 +168,27 @@ export function VoiceAgentPanel() {
       <SessionSummary />
       <PicksTray />
 
-      <div className="rounded-xl border border-white/10">
+      <div className="rounded-lg border border-zinc-200">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-white/50"
+          className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-400"
         >
           <span>Conversation · {transcript.length}</span>
           <span aria-hidden>{open ? "▾" : "▸"}</span>
         </button>
         {open ? (
-          <div ref={boxRef} className="flex max-h-64 flex-col gap-2 overflow-y-auto border-t border-white/10 px-4 py-3">
+          <div ref={boxRef} className="flex max-h-64 flex-col gap-2 overflow-y-auto border-t border-zinc-200 px-4 py-3">
             {transcript.length === 0 ? (
-              <p className="text-sm text-white/40">The conversation will appear here.</p>
+              <p className="text-sm text-zinc-400">The conversation will appear here.</p>
             ) : (
               transcript.map((line) => (
                 <p
                   key={line.id}
                   className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                     line.role === "user"
-                      ? "self-end bg-teal-400/15 text-teal-50"
-                      : "self-start bg-white/5 text-white"
+                      ? "self-end bg-zinc-100 text-zinc-800"
+                      : "self-start border border-zinc-200 bg-white text-zinc-800"
                   }`}
                 >
                   {line.text}

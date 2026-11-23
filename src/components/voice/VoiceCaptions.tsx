@@ -66,18 +66,20 @@ export function VoiceCaptions() {
 
   return (
     <div
-      className={`pointer-events-none absolute inset-x-0 bottom-[60px] z-40 flex justify-center px-3 transition-opacity duration-500 sm:bottom-28 sm:px-6 ${
+      className={`pointer-events-none absolute inset-x-0 bottom-[8.25rem] z-40 flex justify-center px-3 transition-opacity duration-500 sm:bottom-[10.5rem] sm:px-6 ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       aria-live="polite"
     >
       <p
-        className={`max-w-2xl rounded-xl px-3 py-1.5 text-center text-sm leading-snug shadow-[0_8px_40px_rgba(0,0,0,0.35)] backdrop-blur-md sm:rounded-2xl sm:px-5 sm:py-3 sm:text-2xl ${
-          showUser ? "bg-black/35 text-white/75 italic" : "bg-black/50 font-medium text-white"
+        className={`max-w-2xl rounded-xl px-3 py-1.5 text-center text-sm leading-snug shadow-[0_8px_32px_rgba(0,0,0,0.25)] backdrop-blur-md sm:rounded-2xl sm:px-5 sm:py-3 sm:text-2xl ${
+          showUser
+            ? "bg-white/60 italic text-zinc-600"
+            : "bg-white/85 font-medium text-zinc-900"
         }`}
       >
         {showUser ? (
-          <span className="mr-2 align-middle text-sm not-italic text-teal-200/80">
+          <span className="mr-2 align-middle text-sm not-italic text-indigo-500">
             आप
           </span>
         ) : null}

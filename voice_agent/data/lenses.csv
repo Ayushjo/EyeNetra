@@ -1,0 +1,7 @@
+lens_code,name,description,price,conditions
+STD-SV-01,Standard Single Vision,Basic clear lens for vision correction,600,"no power needed; low screen time (under 6 hrs/day)"
+AR-01,Anti-Reflective,Reduces glare from lights and screens,900,"has power; screen time under 6 hrs/day; age under 40"
+BLU-AR-01,Blue-Cut Anti-Reflective,Blocks blue light and reduces glare — best for screen-heavy users with power,1200,"has power; screen time 6+ hrs/day; age under 40"
+BLU-ZERO-01,Blue-Cut Zero Power,Blue light blocking lens without prescription — for screen users without eye power,800,"no power; screen time 6+ hrs/day"
+PROG-01,Progressive Lens,No-line bifocal — corrects both distance and near vision in one lens,3500,"has power; age 40 or above"
+PHOTO-01,Photochromic (Transitions),Automatically darkens outdoors and clears indoors,2500,"has power; frequent outdoor use"

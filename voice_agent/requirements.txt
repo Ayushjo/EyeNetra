@@ -1,0 +1,24 @@
+google-genai>=1.0.0
+python-dotenv>=1.0.0
+
+# Part 2 — voice pipeline (see PART2_PLAN.md)
+# No `silero` extra: bot.py deliberately doesn't run local VAD on top of
+# Sarvam's server-side VAD (see PART2_PLAN.md, Production settings) — and
+# silero drags in torch, which pins numpy<2 and has no cp313 wheel, breaking
+# install on a machine without build tools. >=1.0.0 because SarvamSTTService
+# doesn't exist before pipecat-ai 1.x (older 0.0.x releases only shipped
+# Sarvam TTS).
+#
+# `webrtc` + `runner` instead of `daily`: daily-python (Daily's transport)
+# ships no Windows wheels at all (macOS/Linux only), so it can't install here.
+# Pipecat's own SmallWebRTC transport is pure-Python-plus-abi3-wheels and
+# works on Windows. Swap back to `daily` if this later runs under WSL/Linux/
+# the kiosk box directly. `runner` pulls in fastapi/uvicorn, needed for
+# `python bot.py` to serve the dev page and pick a transport at all.
+# <2.0.0: bot.py uses PipelineTask/PipelineParams, deprecated in 1.3.0 in
+# favor of PipelineWorker but still functional; pin below the release that
+# removes them.
+# rnnoise: free noise suppression on the mic input (bot.py audio_in_filter).
+# >=1.5.0: Pipecat Flows ships in core from 1.5 (flow.py imports pipecat.flows).
+pipecat-ai[google,sarvam,webrtc,runner,rnnoise]>=1.5.0,<2.0.0
+loguru>=0.7.0

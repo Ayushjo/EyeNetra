@@ -1,0 +1,11 @@
+sku,name,brand,type,shape,material,gender,price,stock,photo_filename
+EN-1001,Classic Aviator,Vincent Chase,frame,aviator,metal,male,1200,5,EN-1001.png
+EN-1002,Trendy Round,Lenskart,frame,round,acetate,unisex,800,3,EN-1002.png
+EN-1003,Office Rectangle,John Jacobs,frame,rectangular,metal,male,2200,4,EN-1003.png
+EN-1004,Chic Cat-Eye,Vincent Chase,frame,cat-eye,acetate,female,1800,6,EN-1004.png
+EN-1005,Sport Wraparound,Fastrack,sunglass,oval,TR90,male,1500,2,EN-1005.png
+EN-1006,Titanium Slim,John Jacobs,frame,rectangular,titanium,male,4500,3,EN-1006.png
+EN-1007,Vintage Round,Vincent Chase,frame,round,acetate,female,2800,5,EN-1007.png
+EN-1008,Premium Square,Ray-Ban,sunglass,square,acetate,unisex,6500,2,EN-1008.png
+EN-1009,Lightweight Oval,Titan,frame,oval,TR90,unisex,3500,4,EN-1009.png
+EN-1010,Budget Classic,Lenskart,frame,rectangular,metal,unisex,950,8,EN-1010.png

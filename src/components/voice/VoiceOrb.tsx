@@ -4,17 +4,21 @@ import { useEffect, useRef } from "react";
 import { useVoiceStore, voiceLevels, type VoicePhase } from "@/store/voiceStore";
 
 /**
- * The assistant's "face": a glowing glass orb rendered by a fragment shader.
+ * The assistant's presence: a single glass sphere with a slow inner nebula
+ * and a nucleus that swells while it speaks — one restrained object, one
+ * accent colour family.
  *
- *   off        dim, slow breathing
- *   connecting faster breathing, pale
- *   listening  calm teal, gentle swirl
- *   user       teal brightening + ripples driven by the customer's mic
+ *   off        dim slate, slow breathing
+ *   connecting soft indigo, quickening
+ *   listening  indigo, gentle swirl
+ *   user       brighter indigo + ripples driven by the customer's mic
  *   thinking   violet, fast inner swirl
- *   speaking   warm gold, surface wobbles with the bot's voice
+ *   speaking   luminous indigo, nucleus rides the bot's voice
  *
  * Levels come from voiceLevels (Web Audio RMS), read every animation frame
  * so the orb follows syllables without any React re-render.
+ * Per-frame cost note: two 5-octave fbm calls + a 3-iteration ripple loop
+ * per pixel — bounded, fine on integrated GPUs.
  */
 
 const VERT = `
@@ -62,11 +66,16 @@ void main() {
 
   // Radius: breathing + audio, with a noisy wobble when loud.
   float breathe = 0.015 * sin(t * 1.6);
-  float wob = (noise(vec3(cos(ang) * 1.6, sin(ang) * 1.6, t * 1.4)) - 0.5) * (0.04 + 0.16 * uLevel);
-  float R = 0.56 + breathe + 0.07 * uLevel + wob;
+  float wob = (noise(vec3(cos(ang) * 1.6, sin(ang) * 1.6, t * 1.4)) - 0.5) * (0.035 + 0.15 * uLevel);
+  float R = 0.52 + breathe + 0.06 * uLevel + wob;
 
   vec3 col = vec3(0.0);
   float alpha = 0.0;
+
+  // Soft outer glow.
+  float g = exp(-max(r - R, 0.0) * (9.0 - 4.0 * uLevel)) * (0.30 + 0.60 * uLevel);
+  col += uColRim * g;
+  alpha = max(alpha, g * 0.85);
 
   if (r < R) {
     float z = sqrt(max(R * R - r * r, 0.0));
@@ -84,26 +93,25 @@ void main() {
     float fres = pow(1.0 - z / R, 2.2);
     // Glass: dark core shading, bright rim, a specular highlight.
     float shade = 0.55 + 0.45 * (z / R);
-    vec2 hl = uv - vec2(-0.2, 0.24) * R;
-    float spec = exp(-dot(hl, hl) / (0.018 * R)) * 0.55;
-    col = body * shade + uColRim * fres * 1.2 + vec3(spec);
+    vec2 hl = uv - vec2(-0.18, 0.22) * R;
+    float spec = exp(-dot(hl, hl) / (0.016 * R)) * 0.5;
+    vec3 scol = body * shade + uColRim * fres * 1.2 + vec3(spec);
+    // Nucleus: the voice swells it — the object is what talks.
+    float core = exp(-(r * r) / (0.004 + 0.018 * uLevel));
+    scol += uColRim * core * (0.25 + 1.1 * uLevel);
     float edge = smoothstep(R, R - 0.012, r);
-    alpha = edge;
+    col = mix(col, scol, edge);
+    alpha = max(alpha, edge);
   }
-
-  // Soft outer glow.
-  float g = exp(-max(r - R, 0.0) * (9.0 - 4.0 * uLevel)) * (0.35 + 0.65 * uLevel);
-  col += uColRim * g * (1.0 - alpha);
-  alpha = max(alpha, g * 0.85);
 
   // Ripples while the customer speaks.
   if (uRipple > 0.001) {
     for (int k = 0; k < 3; k++) {
       float ph = fract(t * 0.7 + float(k) / 3.0);
       float rr = R + ph * 0.42;
-      float ring = exp(-pow((r - rr) * 70.0, 2.0)) * (1.0 - ph) * uRipple;
-      col += uColRim * ring;
-      alpha = max(alpha, ring);
+      float ring2 = exp(-pow((r - rr) * 70.0, 2.0)) * (1.0 - ph) * uRipple;
+      col += uColRim * ring2;
+      alpha = max(alpha, ring2);
     }
   }
 
@@ -115,13 +123,13 @@ void main() {
 type Look = { a: number[]; b: number[]; rim: number[]; swirl: number; dim: number };
 
 const LOOKS: Record<VoicePhase, Look> = {
-  off:        { a: [0.10, 0.14, 0.22], b: [0.22, 0.30, 0.42], rim: [0.45, 0.60, 0.80], swirl: 0.5, dim: 0.75 },
-  connecting: { a: [0.15, 0.22, 0.35], b: [0.40, 0.55, 0.75], rim: [0.65, 0.80, 1.00], swirl: 1.4, dim: 0.9 },
-  listening:  { a: [0.02, 0.20, 0.28], b: [0.10, 0.60, 0.70], rim: [0.40, 0.95, 1.00], swirl: 0.8, dim: 1.0 },
-  user:       { a: [0.03, 0.28, 0.30], b: [0.20, 0.85, 0.80], rim: [0.55, 1.00, 0.95], swirl: 1.1, dim: 1.1 },
-  thinking:   { a: [0.12, 0.05, 0.30], b: [0.50, 0.30, 0.95], rim: [0.75, 0.60, 1.00], swirl: 3.2, dim: 1.05 },
-  speaking:   { a: [0.30, 0.12, 0.03], b: [0.98, 0.62, 0.20], rim: [1.00, 0.85, 0.50], swirl: 1.3, dim: 1.1 },
-  error:      { a: [0.30, 0.04, 0.06], b: [0.70, 0.15, 0.18], rim: [1.00, 0.45, 0.45], swirl: 0.6, dim: 0.9 },
+  off:        { a: [0.09, 0.09, 0.12], b: [0.20, 0.20, 0.26], rim: [0.55, 0.58, 0.70], swirl: 0.5, dim: 0.9 },
+  connecting: { a: [0.10, 0.12, 0.26], b: [0.35, 0.40, 0.72], rim: [0.58, 0.65, 1.00], swirl: 1.6, dim: 0.95 },
+  listening:  { a: [0.05, 0.08, 0.26], b: [0.22, 0.30, 0.78], rim: [0.48, 0.58, 1.00], swirl: 0.8, dim: 1.0 },
+  user:       { a: [0.08, 0.14, 0.32], b: [0.30, 0.44, 0.88], rim: [0.60, 0.72, 1.00], swirl: 1.1, dim: 1.1 },
+  thinking:   { a: [0.13, 0.07, 0.30], b: [0.42, 0.28, 0.82], rim: [0.68, 0.55, 1.00], swirl: 3.2, dim: 1.05 },
+  speaking:   { a: [0.10, 0.14, 0.34], b: [0.36, 0.48, 0.98], rim: [0.75, 0.82, 1.00], swirl: 1.4, dim: 1.15 },
+  error:      { a: [0.26, 0.05, 0.07], b: [0.60, 0.16, 0.18], rim: [0.95, 0.50, 0.50], swirl: 0.6, dim: 0.9 },
 };
 
 function compile(gl: WebGLRenderingContext, type: number, src: string) {

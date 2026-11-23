@@ -1,0 +1,19 @@
+# Secrets — NEVER commit
+.env
+
+# Virtual environment
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Customer data (contains names and phone numbers — keep out of git)
+leads.json
+
+# OS
+.DS_Store
+Thumbs.db
+eval_cache/
