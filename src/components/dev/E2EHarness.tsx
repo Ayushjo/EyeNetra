@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useTryOnStore } from "@/store/tryOnStore";
 import { useVoiceStore } from "@/store/voiceStore";
+import { useKioskStore } from "@/store/kioskStore";
 
 /**
  * Dev-only: with ?e2e=1 (development builds only) install the fake camera +
@@ -33,7 +34,7 @@ export function E2EHarness() {
         log.push({ t: performance.now(), ev: "glasses:mounted", detail: args[0].slice(31) });
       info(...args);
     };
-    (window as unknown as Record<string, unknown>).__e2e = { tryOn: useTryOnStore, voice: useVoiceStore, log };
+    (window as unknown as Record<string, unknown>).__e2e = { tryOn: useTryOnStore, voice: useVoiceStore, kiosk: useKioskStore, log };
     return () => {
       unsubs.forEach((u) => u());
       console.info = info;

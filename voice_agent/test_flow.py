@@ -289,6 +289,28 @@ async def main():
     _, n = await step(fm, flow._record_need, {"need": "power"})
     check("customer comes back after the exit → journey resumes", n["name"] == "rx")
 
+    # ---------------- touch actions (kiosk taps) ----------------
+    fm = FakeFM()
+    await enter(fm, flow.greet_node())
+    check("snapshot lists allowed actions", last_session()["actions"] == ["record_need"])
+    node = await flow.run_action("next_frame", {}, fm)
+    check("tap not allowed in this stage → ignored", node is None and fm.current_node == "greet")
+    node = await flow.run_action("record_need", {"need": "power"}, fm)
+    check("non-touch function can't be called by a tap", node is None)
+    await step(fm, flow._record_need, {"need": "browsing"})
+    await step(fm, flow._set_preferences, {})
+    node = await flow.run_action("next_frame", {}, fm)
+    check("tap 'next' in try-on → option 2", node and node["name"] == "tryon_1")
+    await enter(fm, node)
+    node = await flow.run_action("show_option", {"number": 1}, fm)
+    check("tap a frame card → that frame", node and node["name"] == "tryon_0")
+    await enter(fm, node)
+    node = await flow.run_action("choose_frame", {}, fm)
+    check("tap 'यही लूँगा' → close (browsing: no lens)", node and node["name"] == "close")
+    await enter(fm, node)
+    node = await flow.run_action("skip_contact", {}, fm)
+    check("tap 'बिना नंबर' → handoff", node and node["name"] == "handoff")
+
     globals_ = [f.name for f in flow.global_functions()]
     check("global functions: talk_to_staff + leave_for_now", globals_ == ["talk_to_staff", "leave_for_now"])
     check("no '₹' in any spoken line (TTS reads words)",

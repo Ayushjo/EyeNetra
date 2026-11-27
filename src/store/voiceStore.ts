@@ -26,6 +26,75 @@ export type TryOnSuggestion = {
   total?: number;
 };
 
+/** One frame of the curated set (flow.py _ui_frame). */
+export type KioskFrame = {
+  sku: string;
+  name: string;
+  brand: string;
+  price: number;
+  shape: string;
+  material: string;
+  type?: string;
+  frameId: string | null;
+  variantId: string | null;
+};
+
+export type KioskLens = {
+  code: string;
+  name: string;
+  price: number;
+  tier: "good" | "better" | "best";
+  description: string;
+  reason: string;
+  recommended: boolean;
+};
+
+/** SOP stage of the conversation (flow.py sync actions). */
+export type KioskStage =
+  | "greet" | "rx" | "lifestyle" | "style" | "tryon" | "compare" | "lens" | "close" | "handoff" | "done";
+
+export type KioskProfile = {
+  need?: string;
+  need_detail?: string;
+  rx?: "recent" | "old" | "none" | "unsure";
+  rx_source?: string;
+  symptoms?: boolean;
+  eye_test?: "requested" | "accepted" | "declined";
+  screen_hours?: number;
+  outdoor?: boolean;
+  driving?: boolean;
+  sports?: boolean;
+  child_age?: number;
+  near_difficulty?: boolean;
+  prefs?: { max_price?: number; shape?: string; material?: string; gender?: string; light?: boolean; frame_type?: string };
+};
+
+/** Full snapshot the bot pushes after every change ({kind: "session"}). */
+export type KioskSession = {
+  stage: KioskStage;
+  profile: KioskProfile;
+  set: KioskFrame[];
+  current: number | null;
+  shortlist: string[];
+  recommended: string | null;
+  chosen: string | null;
+  lenses: KioskLens[];
+  lens: string | null;
+  total: number | null;
+  contact: { name?: string; phone?: string; guest?: boolean } | null;
+  handoff: { reason: string; detail?: string } | null;
+  ended: boolean;
+  actions: string[];
+};
+
+/** What the staff dashboard has done with this customer (server store). */
+export type StaffState = {
+  acceptedBy?: string;
+  acceptedAt?: number;
+  takeover?: boolean;
+  closed?: boolean;
+};
+
 export type TranscriptLine = {
   id: number;
   role: "user" | "bot";
@@ -51,8 +120,18 @@ type VoiceState = {
   likeSeq: number;
   /** The customer finished (lead saved / goodbye) — show the summary. */
   ended: boolean;
+  /** Latest SOP snapshot from the bot (null before the first one). */
+  session: KioskSession | null;
+  /** Kiosk-side handoff (button pressed while the AI was off, or staff took over). */
+  localHandoff: { reason: string } | null;
+  /** Staff dashboard state for this customer, from the server. */
+  staff: StaffState;
   connect: () => void;
   disconnect: () => void;
+  /** Tap = same as saying it (flow.py run_action). */
+  sendAction: (name: string, args?: Record<string, unknown>) => void;
+  /** "स्टाफ़ को बुलाएँ": the bot speaks one line and steps back. */
+  requestStaff: () => void;
 };
 
 export const useVoiceStore = create<VoiceState>(() => ({
@@ -68,8 +147,13 @@ export const useVoiceStore = create<VoiceState>(() => ({
   dropSeq: 0,
   likeSeq: 0,
   ended: false,
+  session: null,
+  localHandoff: null,
+  staff: {},
   connect: () => {},
   disconnect: () => {},
+  sendAction: () => {},
+  requestStaff: () => {},
 }));
 
 /**

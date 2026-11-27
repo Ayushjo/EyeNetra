@@ -124,8 +124,8 @@ def _say(text: str) -> dict:
     return {"type": "tts_say", "text": text}
 
 
-def _sync(stage: str) -> dict:
-    return {"type": "sync", "stage": stage}
+def _sync(stage: str, actions: list[str] | None = None) -> dict:
+    return {"type": "sync", "stage": stage, "actions": actions or []}
 
 
 def _frame_facts(f: dict) -> str:
@@ -315,11 +315,28 @@ class StoreFlow:
             "contact": st.get("contact"),
             "handoff": st.get("handoff"),
             "ended": st.get("stage") in ("handoff", "done"),
+            # What the kiosk may send as a touch action right now (same as saying it).
+            "actions": st.get("actions", []),
         }
+
+    # Touch actions from the kiosk: tapping a frame / lens / button is the same
+    # as saying it — the same handler runs, and only if the current node offers it.
+    _TOUCH = ("next_frame", "prev_frame", "show_option", "like_frame", "choose_frame", "more_frames",
+              "show_shortlisted", "choose_lens", "skip_contact", "see_frames")
+
+    async def run_action(self, name: str, args: dict, flow_manager: FlowManager) -> NodeConfig | None:
+        st = self._st(flow_manager)
+        if name not in self._TOUCH or name not in st.get("actions", []):
+            logger.warning(f"touch action {name} not allowed in stage {st.get('stage')} ({st.get('actions')})")
+            return None
+        handler = getattr(self, f"_{name}")
+        _, node = await handler(dict(args or {}), flow_manager)
+        return node
 
     async def _sync_action(self, action: dict, flow_manager: FlowManager) -> None:
         st = self._st(flow_manager)
         st["stage"] = action.get("stage", st.get("stage"))
+        st["actions"] = list(action.get("actions", []))
         await self._event(self.snapshot(flow_manager))
 
     async def _show_tryon_action(self, action: dict, flow_manager: FlowManager) -> None:
@@ -358,7 +375,7 @@ class StoreFlow:
         node: dict = {
             "name": name,
             "task_messages": [{"role": "developer", "content": task}],
-            "pre_actions": [_sync(stage), *(extra_pre or []), *([_say(say)] if say else [])],
+            "pre_actions": [_sync(stage, [f.name for f in functions]), *(extra_pre or []), *([_say(say)] if say else [])],
             "respond_immediately": False,
             "functions": functions,
         }

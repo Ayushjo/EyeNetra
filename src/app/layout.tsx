@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Mukta, Tiro_Devanagari_Hindi } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,10 +12,23 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Kiosk type: Mukta (Devanagari + Latin UI) and Tiro Devanagari Hindi (display serif).
+const mukta = Mukta({
+  variable: "--font-mukta",
+  subsets: ["devanagari", "latin"],
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const tiro = Tiro_Devanagari_Hindi({
+  variable: "--font-tiro",
+  subsets: ["devanagari", "latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+});
+
 export const metadata: Metadata = {
-  title: "EyeNetra — Virtual Eyewear Try-On",
-  description:
-    "Web-based virtual try-on for eyewear with real-time webcam AR.",
+  title: "KG Optic",
+  description: "KG Optic — your optical consultant and virtual try-on.",
 };
 
 export default function RootLayout({
@@ -24,9 +37,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="hi">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${mukta.variable} ${tiro.variable} antialiased`}
       >
         {children}
       </body>

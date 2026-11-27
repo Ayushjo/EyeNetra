@@ -24,6 +24,7 @@ from loguru import logger
 
 from pipecat.frames.frames import (
     Frame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -614,13 +615,26 @@ async def bot(runner_args: RunnerArguments) -> None:
 
     @rtvi.event_handler("on_client_message")
     async def on_client_message(rtvi, msg):
-        if getattr(msg, "type", None) != "handoff":
-            return
-        logger.info(f"Kiosk asked for staff: {msg.data}")
+        kind = getattr(msg, "type", None)
+        data = getattr(msg, "data", None) or {}
         try:
-            await flow_manager.set_node_from_config(store_flow.handoff_node(flow_manager, "customer_button"))
-        except Exception as e:  # never crash the call over this
-            logger.error(f"handoff from kiosk failed: {e}")
+            if kind == "handoff":
+                logger.info(f"Kiosk asked for staff: {data}")
+                await flow_manager.set_node_from_config(store_flow.handoff_node(flow_manager, "customer_button"))
+            elif kind == "action":
+                # A tap on the kiosk (frame card, heart, lens card, "no number").
+                name = str(data.get("name", ""))
+                logger.info(f"Kiosk touch action: {name} {data.get('args')}")
+                node = await store_flow.run_action(name, data.get("args") or {}, flow_manager)
+                if node is not None:
+                    # Cut off whatever the bot was saying; the tap is the newer intent.
+                    await task.queue_frames([InterruptionFrame()])
+                    await flow_manager.set_node_from_config(node)
+                else:
+                    # Handlers that stay in the node (e.g. show_shortlisted) still update the kiosk.
+                    await store_flow._event(store_flow.snapshot(flow_manager))
+        except Exception as e:  # never crash the call over a tap
+            logger.error(f"kiosk message {kind} failed: {e}")
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):

@@ -6,6 +6,7 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import {
   useVoiceStore,
   voiceLevels,
+  type KioskSession,
   type TranscriptLine,
   type TryOnSuggestion,
 } from "@/store/voiceStore";
@@ -77,6 +78,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const clientRef = useRef<PipecatClient | null>(null);
   const lineIdRef = useRef(0);
   const botLineIdRef = useRef<number | null>(null);
+  const botStoppedAtRef = useRef(0);
+  const lastBotTextAtRef = useRef(0);
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const metersRef = useRef<(() => void)[]>([]);
@@ -157,8 +160,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         onUserStoppedSpeaking: () =>
           set((s) => (s.phase === "user" ? { phase: "thinking" } : {})),
         onBotStartedSpeaking: () => set({ phase: "speaking" }),
-        onBotStoppedSpeaking: () =>
-          set((s) => (s.phase === "speaking" ? { phase: "listening" } : {})),
+        onBotStoppedSpeaking: () => {
+          botStoppedAtRef.current = performance.now();
+          set((s) => (s.phase === "speaking" ? { phase: "listening" } : {}));
+        },
         // The bot's audio arrives as a remote WebRTC track — the transport
         // emits it but nothing plays it until we attach it to an <audio>.
         onTrackStarted: (track: MediaStreamTrack, participant) => {
@@ -201,6 +206,17 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         // transcript follow the audio rather than the model's tokens.
         onBotTtsText: (data: BotTTSTextData) => {
           if (!data.text) return;
+          // A new bot turn without a customer line in between (e.g. after a
+          // tap on the screen): start a fresh caption instead of appending.
+          const now = performance.now();
+          if (
+            botLineIdRef.current != null &&
+            botStoppedAtRef.current > lastBotTextAtRef.current &&
+            now - botStoppedAtRef.current > 1200
+          ) {
+            botLineIdRef.current = null;
+          }
+          lastBotTextAtRef.current = now;
           if (botLineIdRef.current == null) {
             botLineIdRef.current = pushLine("bot", "");
             set({ botCaption: "" });
@@ -235,6 +251,16 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
             }));
           } else if (msg?.kind === "session_end") {
             set({ ended: true });
+          } else if (msg?.kind === "session") {
+            const { kind: _k, ...session } = msg as unknown as KioskSession & { kind: string };
+            void _k;
+            set((s) => ({
+              session,
+              ended: session.ended,
+              // The bot's shortlist is the source of truth for hearts.
+              picks: session.shortlist,
+              likeSeq: session.shortlist.length > s.picks.length ? s.likeSeq + 1 : s.likeSeq,
+            }));
           }
         },
       },
@@ -273,13 +299,35 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     useVoiceStore.setState({ status: "idle", phase: "off", userInterim: "" });
   }, [releaseAudio]);
 
-  // Expose connect/disconnect to every component through the store.
+  const send = useCallback((type: string, data: unknown) => {
+    const client = clientRef.current;
+    if (!client || useVoiceStore.getState().status !== "connected") return false;
+    try {
+      client.sendClientMessage(type, data);
+      return true;
+    } catch (e) {
+      console.warn(`[EyeNetra:voice] could not send ${type}`, e);
+      return false;
+    }
+  }, []);
+
+  // Expose connect/disconnect/actions to every component through the store.
   useEffect(() => {
     useVoiceStore.setState({
       connect: () => void connect(),
       disconnect: () => void disconnect(),
+      sendAction: (name, args) => {
+        send("action", { name, args: args ?? {} });
+      },
+      requestStaff: () => {
+        // With the AI live, it says one line and steps back (flow.py
+        // handoff). Without it, the kiosk hands off on its own.
+        if (!send("handoff", { source: "button" })) {
+          useVoiceStore.setState({ localHandoff: { reason: "customer_button" } });
+        }
+      },
     });
-  }, [connect, disconnect]);
+  }, [connect, disconnect, send]);
 
   // Leave no live WebRTC connection (or held mic) behind on unmount.
   useEffect(() => {
@@ -291,7 +339,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   }, [releaseAudio]);
 }
 
-/** Clear the shortlist and picks for the next customer. */
+/** Clear everything for the next customer. */
 export function resetVoiceSession() {
   useVoiceStore.setState({
     transcript: [],
@@ -301,5 +349,9 @@ export function resetVoiceSession() {
     userInterim: "",
     botCaption: "",
     ended: false,
+    session: null,
+    localHandoff: null,
+    staff: {},
+    errorMessage: null,
   });
 }
