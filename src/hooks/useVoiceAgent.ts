@@ -112,6 +112,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     set({
       status: "connecting",
       phase: "connecting",
+      dropped: false,
       errorMessage: null,
       userInterim: "",
       botCaption: "",
@@ -137,9 +138,12 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
           if (mic) meter(mic, "mic");
         },
         onDisconnected: () => {
+          // disconnect() clears clientRef first; if it is still set, the
+          // other side hung up on us (bot crash, service out of credit…).
+          const dropped = clientRef.current === client;
           clientRef.current = null;
           releaseAudio();
-          set({ status: "idle", phase: "off", userInterim: "" });
+          set({ status: "idle", phase: "off", userInterim: "", ...(dropped ? { dropped: true } : {}) });
         },
         onError: (msg) => {
           const data = msg.data as Record<string, unknown> | string | undefined;
@@ -212,7 +216,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
           if (
             botLineIdRef.current != null &&
             botStoppedAtRef.current > lastBotTextAtRef.current &&
-            now - botStoppedAtRef.current > 1200
+            now - botStoppedAtRef.current > 400
           ) {
             botLineIdRef.current = null;
           }
@@ -350,6 +354,7 @@ export function resetVoiceSession() {
     botCaption: "",
     ended: false,
     session: null,
+    dropped: false,
     localHandoff: null,
     staff: {},
     errorMessage: null,

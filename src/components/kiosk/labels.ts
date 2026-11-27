@@ -50,6 +50,7 @@ export const HANDOFF_HI: Record<string, string> = {
   complaint: "शिकायत",
   bulk: "बल्क / कॉर्पोरेट",
   staff_takeover: "स्टाफ़ ने संभाला",
+  ai_unavailable: "AI सहायक में दिक़्क़त — स्टाफ़ को बुलाया",
   staff_initiated: "स्टाफ़ ने संभाला",
   other: "अन्य",
 };

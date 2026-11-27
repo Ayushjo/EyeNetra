@@ -9,7 +9,15 @@ import { useVoiceStore } from "@/store/voiceStore";
 const REPORT_URL = "/api/sessions";
 const HEARTBEAT_MS = 2000;
 /** No speech either way for this long → the customer walked away. */
-const IDLE_MS = 90_000;
+const IDLE_MS_DEFAULT = 90_000;
+/** Dev e2e can shorten it with ?idle=<ms> (never in production builds). */
+function idleMs() {
+  if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
+    const v = Number(new URLSearchParams(window.location.search).get("idle"));
+    if (v > 0) return v;
+  }
+  return IDLE_MS_DEFAULT;
+}
 /** Warm exit screen stays this long, then the kiosk is ready for the next person. */
 const DONE_MS = 15_000;
 /** After staff close a session, a short thank-you, then reset. */
@@ -201,6 +209,30 @@ export function useKioskSession() {
       }
     });
 
+    // The AI failed mid-conversation (call dropped, or stuck "thinking"):
+    // never leave the customer staring at a frozen screen — hand to staff.
+    let thinkingSince = 0;
+    let errorSince = 0;
+    const aiFailed = (why: string) => {
+      const v = useVoiceStore.getState();
+      if (!useKioskStore.getState().sessionId || v.localHandoff || v.staff.takeover) return;
+      if (v.session?.stage === "handoff" || v.session?.stage === "done") return;
+      console.warn(`[EyeNetra:kiosk] AI unavailable (${why}) — handing to staff`);
+      endAI();
+      useVoiceStore.setState({ localHandoff: { reason: "ai_unavailable" } });
+    };
+    const unsubFail = useVoiceStore.subscribe((s, p) => {
+      if (s.dropped && !p.dropped) aiFailed("call dropped");
+      if (s.phase === "thinking" && p.phase !== "thinking") thinkingSince = Date.now();
+      if (s.phase !== "thinking") thinkingSince = 0;
+      if (s.status === "connected" && s.errorMessage && !p.errorMessage) errorSince = Date.now();
+      if (s.phase === "speaking") errorSince = 0;
+    });
+    const watchdog = setInterval(() => {
+      if (thinkingSince && Date.now() - thinkingSince > 15_000) aiFailed("no reply in 15 s");
+      if (errorSince && Date.now() - errorSince > 10_000) aiFailed("service error");
+    }, 1000);
+
     // Walked away mid-conversation (not while waiting for staff).
     const idle = setInterval(() => {
       const k = useKioskStore.getState();
@@ -213,13 +245,15 @@ export function useKioskSession() {
         return;
       }
       if (v.phase === "speaking" || v.phase === "user") return;
-      if (Date.now() - k.lastActivity > IDLE_MS) {
+      if (Date.now() - k.lastActivity > idleMs()) {
         useKioskStore.getState().finish("abandoned");
       }
-    }, 5000);
+    }, 1000);
 
     return () => {
       unsub();
+      unsubFail();
+      clearInterval(watchdog);
       clearInterval(idle);
       for (const t of [handoffTimer, doneTimer, closedTimer]) if (t) clearTimeout(t);
     };

@@ -215,7 +215,7 @@ function Hints() {
   const stage = useVoiceStore((s) => s.session?.stage ?? "greet");
   const phase = useVoiceStore((s) => s.phase);
   const hints = SAY_HINTS[stage];
-  if (!hints || phase === "connecting" || phase === "off") return null;
+  if (!hints || phase === "connecting" || phase === "off" || phase === "error") return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm text-muted">ऐसे बोल सकते हैं:</span>
@@ -630,8 +630,11 @@ function HandoffPanel() {
   const local = useVoiceStore((s) => s.localHandoff);
   const reason = session?.handoff?.reason ?? local?.reason ?? (staff.takeover ? "staff_takeover" : "customer_request");
   const name = session?.contact?.name;
+  const sorry = reason === "ai_unavailable" && !staff.acceptedBy && !staff.closed;
   const title = staff.closed
     ? "धन्यवाद! फिर मिलेंगे 🙏"
+    : sorry
+      ? "माफ़ कीजिए, मुझमें अभी थोड़ी दिक़्क़त है — हमारे स्टाफ़ बस आ रहे हैं"
     : staff.acceptedBy
       ? `${staff.acceptedBy} आपकी मदद के लिए आ रहे हैं`
       : "हमारे स्टाफ़ बस आ रहे हैं";

@@ -122,6 +122,8 @@ type VoiceState = {
   ended: boolean;
   /** Latest SOP snapshot from the bot (null before the first one). */
   session: KioskSession | null;
+  /** The call ended without us hanging up (bot crashed / service failed). */
+  dropped: boolean;
   /** Kiosk-side handoff (button pressed while the AI was off, or staff took over). */
   localHandoff: { reason: string } | null;
   /** Staff dashboard state for this customer, from the server. */
@@ -148,6 +150,7 @@ export const useVoiceStore = create<VoiceState>(() => ({
   likeSeq: 0,
   ended: false,
   session: null,
+  dropped: false,
   localHandoff: null,
   staff: {},
   connect: () => {},

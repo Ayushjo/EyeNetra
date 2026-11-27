@@ -277,6 +277,7 @@ async def scenario_purchase(p: Page, client: httpx.AsyncClient, shots: Path):
     st = await wait_bot_done(p)
     print(f"  BOT : [{st['stage']}] {st['caption']}", flush=True)
     check("close shows the total", st["total"] and st["lens"] == rec)
+    check("caption is the new turn only (no leftover lens line)", st["caption"].startswith("तो फ़ाइनल"), st["caption"][:60])
     await p.shot(shots / "07_close.png")
 
     api = await api_session(client, sid)
@@ -404,6 +405,62 @@ async def scenario_sunglasses(p: Page, client: httpx.AsyncClient, shots: Path):
     check("warm exit → next customer", True)
 
 
+async def scenario_walkaway(p: Page, client: httpx.AsyncClient, shots: Path):
+    print("\n=== Scenario: customer walks away mid-conversation (idle 10 s for the test) ===", flush=True)
+    await p.send("Page.navigate", url=f"{APP}/?e2e=1&idle=10000")
+    await wait_for(p, lambda s: s.get("view") == "welcome", 60)
+    await p.js("document.querySelector('[data-testid=start]').click()")
+    await wait_bot_done(p)
+    sid = await kiosk_sid(p)
+    t0 = time.time()
+    st = await wait_for(p, lambda s: s.get("view") == "welcome", 40)
+    check("idle → kiosk resets to welcome on its own", True, f"{time.time() - t0:.0f}s")
+    check("AI disconnected", st["status"] == "idle")
+    await asyncio.sleep(1)
+    api = await api_session(client, sid)
+    check("staff API: marked left", api.get("status") == "left", api.get("status"))
+
+
+async def scenario_botdown(p: Page, client: httpx.AsyncClient, shots: Path):
+    """Run with bot.py STOPPED."""
+    print("\n=== Scenario: voice server down ===", flush=True)
+    await fresh_kiosk(p)
+    await p.js("document.querySelector('[data-testid=start]').click()")
+    st = await wait_for(p, lambda s: s.get("status") == "error", 30)
+    check("connection failure shown", bool(await p.js("!!document.querySelector('[data-testid=voice-error]')")))
+    check("staff button still available", bool(await p.js("!!document.querySelector('[data-testid=call-staff]')")))
+    await p.shot(shots / "13_bot_down.png")
+    await p.js("document.querySelector('[data-testid=call-staff]').click()")
+    st = await wait_for(p, lambda s: s.get("view") == "handoff", 10)
+    check("call staff works without the AI", st["localHandoff"] is not None)
+    await asyncio.sleep(2.5)
+    sid = await kiosk_sid(p)
+    api = await api_session(client, sid)
+    check("staff API: waiting", api.get("status") == "waiting", api.get("status"))
+    await client.post(f"{APP}/api/sessions/{sid}", json={"action": "close"})
+    await wait_for(p, lambda s: s.get("view") == "welcome", 20)
+
+
+async def scenario_aifail(p: Page, client: httpx.AsyncClient, shots: Path):
+    """Run while the AI services fail (e.g. no credit): the kiosk must hand to staff, not freeze."""
+    print("\n=== Scenario: AI service failing mid-conversation ===", flush=True)
+    await fresh_kiosk(p)
+    await p.js("document.querySelector('[data-testid=start]').click()")
+    t0 = time.time()
+    st = await wait_for(p, lambda s: s.get("view") == "handoff", 45)
+    check("AI failure → handoff screen (no frozen kiosk)", (st.get("localHandoff") or {}).get("reason") == "ai_unavailable",
+          json.dumps(st.get("localHandoff")))
+    check("apology shown", "माफ़ कीजिए" in (st.get("handoffTitle") or ""), st.get("handoffTitle"))
+    check(f"within 30 s ({time.time() - t0:.0f}s)", time.time() - t0 < 30)
+    await p.shot(shots / "14_ai_failed.png")
+    await asyncio.sleep(2.5)
+    sid = await kiosk_sid(p)
+    api = await api_session(client, sid)
+    check("staff alerted (waiting)", api.get("status") == "waiting", api.get("status"))
+    await client.post(f"{APP}/api/sessions/{sid}", json={"action": "close"})
+    await wait_for(p, lambda s: s.get("view") == "welcome", 20)
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenario", default="all")
@@ -430,9 +487,10 @@ async def main():
         p = await open_page(port)
         async with httpx.AsyncClient(timeout=60) as client:
             runs = {"purchase": scenario_purchase, "button": scenario_button,
-                    "takeover": scenario_takeover, "sunglasses": scenario_sunglasses}
+                    "takeover": scenario_takeover, "sunglasses": scenario_sunglasses,
+                    "walkaway": scenario_walkaway, "botdown": scenario_botdown, "aifail": scenario_aifail}
             for name, fn in runs.items():
-                if a.scenario in ("all", name):
+                if a.scenario == name or (a.scenario == "all" and name not in ("botdown", "aifail")):
                     p.errors.clear()
                     try:
                         await fn(p, client, shots)
@@ -440,7 +498,9 @@ async def main():
                         check(f"scenario {name} completed", False, repr(e)[:300])
                         await p.shot(shots / f"ERROR_{name}.png")
                     # MediaPipe logs this INFO line through console.error — not an error.
-                    real = [e for e in p.errors if "favicon" not in e and "XNNPACK delegate" not in e]
+                    real = [e for e in p.errors if "favicon" not in e and "XNNPACK delegate" not in e
+                            and not (name == "botdown" and "Failed to fetch" in e)
+                            and not (name == "aifail" and ("Credits" in e or "credits" in e or "Pipecat" in e))]
                     check(f"{name}: no browser errors", not real, " | ".join(real[:3]))
     finally:
         chrome.terminate()

@@ -119,13 +119,31 @@ export async function reportFromKiosk(report: KioskReport): Promise<StoredSessio
   return s;
 }
 
+/** The kiosk reports every 2 s while a customer is with the AI; silence
+ *  this long means the kiosk was closed / crashed / lost power. */
+const STALE_MS = 30_000;
+
+function expireStale(now = Date.now()) {
+  let changed = false;
+  for (const s of store.sessions.values()) {
+    if (s.status === "ai" && now - s.updatedAt > STALE_MS) {
+      s.status = "left";
+      s.endedAt ??= s.updatedAt;
+      changed = true;
+    }
+  }
+  if (changed) void persist();
+}
+
 export async function listSessions(): Promise<StoredSession[]> {
   await load();
+  expireStale();
   return [...store.sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getSession(id: string): Promise<StoredSession | null> {
   await load();
+  expireStale();
   return store.sessions.get(id) ?? null;
 }
 
