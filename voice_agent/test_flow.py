@@ -167,7 +167,7 @@ async def main():
     check("exactly one recommended lens", sum(o["recommended"] for o in opts) == 1)
     check("9 h screen + power → Blue-Cut AR recommended", next(o for o in opts if o["recommended"])["code"] == "BLU-AR-01")
     check("lens line has price and reason", "₹" not in say_text(n) and "रुपये" in say_text(n) and "आरामदायक" in say_text(n))
-    _, n = await step(fm, flow._choose_lens, {"tier": "recommended"})
+    _, n = await step(fm, flow._choose_lens, {"choice": "recommended"})
     total = fm.state["chosen"]["price"] + fm.state["lens"]["price"]
     check("close states frame + lens + total", n["name"] == "close" and "कुल" in say_text(n) and last_session()["total"] == total)
     check("close asks consent with a guest path", "बिना नंबर" in say_text(n))
@@ -288,6 +288,13 @@ async def main():
           and last_session()["shortlist"] and last_session()["ended"])
     _, n = await step(fm, flow._record_need, {"need": "power"})
     check("customer comes back after the exit → journey resumes", n["name"] == "rx")
+
+    fm = FakeFM()
+    await enter(fm, flow.greet_node())
+    await step(fm, flow._record_need, {"need": "power", "near_difficulty": True})
+    await step(fm, flow._record_rx, {"status": "recent"})
+    _, n = await step(fm, flow._record_lifestyle, {"screen_hours": 1})
+    check("reading difficulty said at the start → near question skipped", n["name"] == "style")
 
     # ---------------- touch actions (kiosk taps) ----------------
     fm = FakeFM()

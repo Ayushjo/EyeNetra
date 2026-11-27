@@ -9,7 +9,7 @@ including crowded-shop 0 dB babble) and counts wrong actions.
 import json
 from pathlib import Path
 
-from fast_intent import fast_intent
+from fast_intent import fast_call, fast_intent
 
 SHOW = {"next_frame", "prev_frame", "show_option", "like_frame", "choose_frame", "set_preferences",
         "talk_to_staff", "leave_for_now"}
@@ -42,6 +42,22 @@ cases = [
     ({"record_need"}, "अगला दिखाओ", None),     # node without those functions
     ({"next_frame", "like_frame"}, "यही लूँगा", None),  # no choose_frame offered → LLM
 ]
+LIFE = {"record_lifestyle", "talk_to_staff", "leave_for_now"}
+for text, want in [
+    ("छह घंटे laptop.", {"screen_hours": 6}),
+    ("दिन में आठ घंटे laptop पर काम करता हूँ।", {"screen_hours": 8}),
+    ("चार-पाँच घंटे mobile पर रहता हूँ।", {"screen_hours": 5}),
+    ("10 hours computer, aur raat ko gaadi chalata hoon", {"screen_hours": 10, "driving": True}),
+    ("About 9 hours on laptop.", {"screen_hours": 9}),
+    ("दो घंटे धूप में रहता हूँ", None),          # hours but not screens → LLM
+    ("कितने घंटे होने चाहिए?", None),            # question → LLM
+    ("आठ घंटे laptop, गाड़ी नहीं चलाता", {"screen_hours": 8}),  # negated driving not set
+]:
+    got = fast_call(text, LIFE)
+    got_args = got[1] if got else None
+    check(f"lifestyle {text!r} → {want} (got {got_args})", got_args == want)
+check("lifestyle shortcut only where offered", fast_call("छह घंटे laptop", {"record_need"}) is None)
+
 for avail, text, want in cases:
     got = fast_intent(text, avail)
     check(f"{text!r} → {want} (got {got})", got == want)

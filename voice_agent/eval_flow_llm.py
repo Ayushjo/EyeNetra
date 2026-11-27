@@ -70,7 +70,7 @@ async def build_nodes() -> dict:
         await go(fm, sf._next_frame)
     nodes["compare"] = await go(fm, sf._next_frame) if fm.current_node != "compare" else sf._compare(fm)
     nodes["lens"] = await go(fm, sf._choose_frame, {})
-    nodes["close"] = await go(fm, sf._choose_lens, {"tier": "recommended"})
+    nodes["close"] = await go(fm, sf._choose_lens, {"choice": "recommended"})
     nodes["set"] = [f["name"] for f in fm.state["set"]]
     nodes["shortlist"] = [f["name"] for f in fm.state["shortlist"]]
 
@@ -154,10 +154,10 @@ CASES = [
     ("compare", "दूसरा वाला लूँगा", "choose_frame", {"number": 2}),
     ("compare", "एक बार दोनों फिर से पहनकर दिखाओ, पहला वाला", "show_shortlisted", {}),
     # lens — SOP stage 7
-    ("lens", "जो आप suggest कर रहे हो वही", "choose_lens", {"tier": ["recommended", "better", "best", "good"]}),
-    ("lens", "सबसे सस्ता वाला", "choose_lens", {"tier": "good"}),
-    ("lens", "सबसे अच्छा वाला दीजिए", "choose_lens", {"tier": "best"}),
-    ("lens", "blue cut वाला", "choose_lens", {"code": "BLU-AR-01"}),
+    ("lens", "जो आप suggest कर रहे हो वही", "choose_lens", {"choice": "recommended"}),
+    ("lens", "सबसे सस्ता वाला", "choose_lens", {"choice": "cheapest"}),
+    ("lens", "सबसे अच्छा वाला दीजिए", "choose_lens", {"choice": "best"}),
+    ("lens", "blue cut वाला", "choose_lens", {"choice": "BLU-AR-01"}),
     ("lens", "ये lens आँखों की बीमारी ठीक करता है क्या?", None, {}),
     # close — SOP stage 8, consent + guest path
     ("close", "मेरा नाम राहुल शर्मा है, नंबर नौ आठ सात छह पाँच चार तीन दो एक शून्य", "save_contact", {"phone": "9876543210"}),

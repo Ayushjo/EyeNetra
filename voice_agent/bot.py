@@ -15,6 +15,7 @@ GEMINI_API_KEY in .env)
 """
 
 import asyncio
+import json
 import os
 import re
 from typing import Awaitable, Callable
@@ -55,7 +56,7 @@ from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from catalogue import stt_keyterms
-from fast_intent import fast_intent
+from fast_intent import fast_call, fast_intent
 from flow import StoreFlow
 from turn_completion import HindiAwareTurnStopStrategy
 from pipecat.flows import FlowManager
@@ -128,7 +129,7 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # gemini-3.8-flash 15.4 s (too slow for voice), 3.1-flash-lite 3–9 s earlier.
 FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
-def _shortcut(context) -> str | None:
+def _shortcut(context) -> tuple[str, dict] | None:
     """fast_intent.py: the function an unambiguous customer reply maps to
     in the current node, or None. Only when this call answers a fresh
     customer message (not a function result)."""
@@ -142,7 +143,7 @@ def _shortcut(context) -> str | None:
             p.get("text", "") for p in content or [] if isinstance(p, dict))
         tools = context.tools
         names = {t.name for t in getattr(tools, "standard_tools", [])}
-        return fast_intent(text, names)
+        return fast_call(text, names)
     except Exception as e:  # never let the shortcut break a turn
         logger.warning(f"fast_intent skipped: {e}")
         return None
@@ -187,14 +188,15 @@ class _RetryingGoogleLLMService(GoogleLLMService):
     async def _stream_response(self, context):  # noqa: ANN001, ANN202 - mirror base signature
         import time as _time
 
-        name = _shortcut(context)
-        if name:
+        hit = _shortcut(context)
+        if hit:
             from google.genai import types as _gt
 
-            logger.info(f"fast_intent: {name} (LLM skipped)")
+            name, fargs = hit
+            logger.info(f"fast_intent: {name} {fargs} (LLM skipped)")
             yield _gt.GenerateContentResponse(
                 candidates=[_gt.Candidate(content=_gt.Content(
-                    role="model", parts=[_gt.Part(function_call=_gt.FunctionCall(name=name, args={}))]))]
+                    role="model", parts=[_gt.Part(function_call=_gt.FunctionCall(name=name, args=fargs))]))]
             )
             return
 
@@ -251,18 +253,19 @@ class _FastSarvamLLMService(SarvamLLMService):
     error (only before streaming starts, so nothing is duplicated)."""
 
     async def get_chat_completions(self, context):  # noqa: ANN001, ANN201
-        name = _shortcut(context)
-        if name:
+        hit = _shortcut(context)
+        if hit:
             from openai.types.chat import ChatCompletionChunk
 
-            logger.info(f"fast_intent: {name} (LLM skipped)")
+            name, fargs = hit
+            logger.info(f"fast_intent: {name} {fargs} (LLM skipped)")
             chunk = ChatCompletionChunk.model_validate({
                 "id": "fast-intent", "object": "chat.completion.chunk", "created": 0,
                 "model": "fast-intent",
                 "choices": [{"index": 0, "finish_reason": "tool_calls", "delta": {
                     "role": "assistant",
                     "tool_calls": [{"index": 0, "id": f"fast-{name}", "type": "function",
-                                    "function": {"name": name, "arguments": "{}"}}],
+                                    "function": {"name": name, "arguments": json.dumps(fargs, ensure_ascii=False)}}],
                 }}],
             })
             return _ListStream([chunk])

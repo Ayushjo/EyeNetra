@@ -109,6 +109,7 @@ Rules:
 - The customer wants to leave or think it over ("सोच के बताऊँगा", "बाद में आऊँगा"): call leave_for_now.
 - Act, don't interview: when the customer's words answer the current step even partly, call the step's function right away with what you have. Ask a question only when their words give nothing for the step.
 - If what you heard is unclear or not addressed to you (other people talking), briefly ask them to repeat. Do not guess.
+- Never describe or recommend lens or frame features (safety, impact-resistant, UV level, coatings…) in your own words: the system shows the options. If the customer says something that does not answer the current question, acknowledge it in a few words and ask the current question again.
 - Fixed lines (greeting, frame announcements, questions) are spoken by the system already; do not repeat them."""
 
 SHAPES = ["round", "rectangular", "square", "aviator", "cat-eye", "oval"]
@@ -390,7 +391,7 @@ class StoreFlow:
             "The customer is saying what they came for. Call record_need with the best match: "
             "power (prescription glasses / chashma / frames), sunglasses, both, eye_test, child (glasses for a "
             "child), service (repair, loose/tight fitting, adjustment, pickup, warranty), contact_lens, or browsing (just "
-            "looking). 'number/power wale glasses', 'nazar ka chashma', 'frame chahiye' = power. 'bas dekh raha hoon', 'aise hi', 'just looking' = browsing (call it, don't ask what they like). Call record_need "
+            "looking). 'number/power wale glasses', 'nazar ka chashma', 'frame chahiye' = power. goggles / kala chashma / dhoop wala = sunglasses. 'bas dekh raha hoon', 'aise hi', 'just looking' = browsing (call it, don't ask what they like). Call record_need "
             "immediately; ask one short question only if you cannot tell at all.",
             [self._record_need_fn()],
             say=GREETING if speak else None, role=True,
@@ -403,6 +404,8 @@ class StoreFlow:
                 "need": {"type": "string", "enum": ["power", "sunglasses", "both", "eye_test", "child",
                                                     "service", "contact_lens", "browsing"]},
                 "detail": {"type": "string", "description": "Anything else they said (budget, style, problem)."},
+                "near_difficulty": {"type": "boolean",
+                                    "description": "true if they say they can't read up close / want reading glasses."},
             },
             ["need"],
         )
@@ -413,6 +416,8 @@ class StoreFlow:
         st["profile"]["need"] = need
         if args.get("detail"):
             st["profile"]["need_detail"] = args["detail"]
+        if args.get("near_difficulty") is True:
+            st["profile"]["near_difficulty"] = True  # said it already → no near question later
         logger.info(f"flow: need={need} detail={args.get('detail')!r}")
         if need in ("power", "both", "child"):
             return None, self.rx_node()
@@ -464,7 +469,9 @@ class StoreFlow:
             return None, self._lifestyle(flow_manager, lead=RX_OK)
         return None, self._node(
             "eye_test_offer", "rx",
-            "A free eye test was offered. Yes → eye_test_choice accept=true. No → accept=false.",
+            "A free eye test was offered. Yes / ok / karwa lenge → eye_test_choice accept=true. No / abhi nahi → "
+            "accept=false. If they ignore the question and talk about something else, call accept=false (staff "
+            "can offer the test again at billing).",
             [self._fn("eye_test_choice", "Customer's answer to the free eye test offer.", self._eye_test_choice,
                       {"accept": {"type": "boolean"}}, ["accept"])],
             say=OFFER_TEST,
@@ -484,13 +491,18 @@ class StoreFlow:
     def _lifestyle(self, fm: FlowManager, lead: str = "") -> NodeConfig:
         need = self._st(fm)["profile"].get("need")
         kind = "sunglasses" if need == "sunglasses" else "child" if need == "child" else "power"
+        focus = {
+            "sunglasses": "what the sunglasses are for: driving (car/bike/driving) and/or outdoor (sun, beach, "
+                          "trip, travel, outdoor work). Do not ask about screens or reading.",
+            "child": "the child's age (child_age) and whether they play sports (sports).",
+            "power": "screen_hours (hours per day on screens), outdoor (lots of sun), driving (drives often, "
+                     "especially at night), near_difficulty (trouble reading phone/newspaper up close).",
+        }[kind]
         return self._node(
             "lifestyle", "lifestyle",
-            "The customer is describing daily use. Call record_lifestyle with whatever they said: "
-            "screen_hours (number, hours per day on screens), outdoor (lots of sun / outdoor work), "
-            "driving (drives often, especially at night), sports, child_age, near_difficulty (trouble "
-            "reading phone/newspaper up close). Unknown fields: omit. 'for driving' = driving true; 'sun/dhoop' = "
-            "outdoor true. Call record_lifestyle immediately with whatever they said — never ask a follow-up.",
+            f"The customer is describing daily use — {focus} Call record_lifestyle on their FIRST answer, "
+            "even if vague or partial: fill what they said, omit the rest. Never ask a follow-up and never "
+            "recommend a product here.",
             [self._fn("record_lifestyle", "Record daily-use answers.", self._record_lifestyle, {
                 "screen_hours": {"type": "integer"},
                 "outdoor": {"type": "boolean"},
@@ -752,15 +764,16 @@ class StoreFlow:
         return self._node(
             "lens", "lens",
             f"Lens options for the chosen frame: {facts}. Recommended: {r['name']}. The customer picks one → "
-            "choose_lens with its tier (good / better / best) or code; 'jo aap kahein' / yes = the recommended "
-            "one; cheapest / sasta = good; best / sabse accha = best; blue cut → its code. Call choose_lens right "
+            "choose_lens with choice = 'recommended' ('jo aap kahein', yes, aapki salah), 'cheapest' (sasta, kam "
+            "wala), 'best' (sabse accha/badhiya, best), 'middle', or the code of the lens they name (e.g. blue cut). "
+            "Call choose_lens right "
             "away, never confirm first. Questions (even 'does it cure/treat eyes?'): answer in one short "
             "sentence — lenses help comfort and clear vision, no medical claims — do not call talk_to_staff "
             "unless they describe an eye symptom.",
             [self._fn("choose_lens", "Customer's lens choice.", self._choose_lens, {
-                "tier": {"type": "string", "enum": ["good", "better", "best", "recommended"]},
-                "code": {"type": "string", "enum": [o["code"] for o in options]},
-            })],
+                "choice": {"type": "string",
+                           "enum": ["recommended", "cheapest", "middle", "best", *[o["code"] for o in options]]},
+            }, ["choice"])],
             say=f"{LENS_INTRO.format(name=r['name'], price=rupees(r['price']), reason=r['reason'])} {LENS_ASK}",
         )
 
@@ -768,10 +781,12 @@ class StoreFlow:
         st = self._st(flow_manager)
         options = st.get("lens_options", [])
         pick = None
-        if args.get("code"):
-            pick = next((o for o in options if o["code"] == args["code"]), None)
-        if pick is None and args.get("tier") in TIERS:
-            pick = next((o for o in options if o["tier"] == args["tier"]), None)
+        choice = str(args.get("choice") or args.get("tier") or args.get("code") or "recommended")
+        by_word = {"cheapest": "good", "good": "good", "middle": "better", "better": "better", "best": "best"}
+        if choice in by_word:
+            pick = next((o for o in options if o["tier"] == by_word[choice]), None)
+        else:
+            pick = next((o for o in options if o["code"] == choice), None)
         if pick is None:
             pick = next(o for o in options if o["recommended"])
         st["lens"] = pick
