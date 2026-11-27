@@ -69,7 +69,7 @@ NUM = {
 ROUND = r"round|राउंड|गोल"
 TESTS = [
     dict(id="need_eyeglasses", node="greet", text="मुझे नज़र का चश्मा बनवाना है।",
-         expect=("record_need", {"need": "eyeglasses"}), ents=[r"नज़?र|nazar", r"चश्म|chashm"]),
+         expect=("record_need", {"need": "power"}), ents=[r"नज़?र|nazar", r"चश्म|chashm"]),
     dict(id="need_sun", node="greet", text="धूप का चश्मा दिखाइए, sunglasses चाहिए।",
          expect=("record_need", {"need": "sunglasses"}), ents=[r"sunglass|सनग्लास|धूप"]),
     dict(id="need_test", node="greet", text="आँखों की जाँच करवानी है।",
@@ -79,39 +79,39 @@ TESTS = [
     dict(id="need_browse", node="greet", text="बस ऐसे ही देख रहा हूँ।",
          expect=("record_need", {"need": "browsing"}), ents=[r"देख|dekh"]),
     dict(id="need_brand", node="greet", text="Lenskart वाला round frame दिखाओ।",
-         expect=("record_need", {"need": "eyeglasses"}), ents=[r"lenskart|लेंसकार्ट", ROUND]),
+         expect=("record_need", {"need": "power"}), ents=[r"lenskart|लेंसकार्ट", ROUND]),
     dict(id="medical", node="greet", text="दो दिन से आँख लाल है और दर्द हो रहा है।",
-         expect=("notify_staff", {}), ents=[r"लाल|laal|red", r"दर्द|dard|pain"]),
-    dict(id="pref_round_1500", node="prefs", text="बजट पंद्रह सौ तक है, गोल वाला चाहिए।",
+         expect=("talk_to_staff", {"reason": "medical"}), ents=[r"लाल|laal|red", r"दर्द|dard|pain"]),
+    dict(id="pref_round_1500", node="style", text="बजट पंद्रह सौ तक है, गोल वाला चाहिए।",
          expect=("set_preferences", {"max_price": 1500, "shape": "round"}), ents=[NUM[1500], ROUND]),
-    dict(id="pref_aviator_2000", node="prefs", text="दो हज़ार के अंदर कुछ aviator दिखाओ।",
+    dict(id="pref_aviator_2000", node="style", text="दो हज़ार के अंदर कुछ aviator दिखाओ।",
          expect=("set_preferences", {"max_price": 2000, "shape": "aviator"}), ents=[NUM[2000], r"aviator|एविएटर"]),
-    dict(id="pref_metal_3500", node="prefs", text="साढ़े तीन हज़ार तक, metal frame चाहिए।",
+    dict(id="pref_metal_3500", node="style", text="साढ़े तीन हज़ार तक, metal frame चाहिए।",
          expect=("set_preferences", {"max_price": 3500, "material": "metal"}), ents=[NUM[3500], r"metal|मेटल"]),
-    dict(id="pref_square_nobudget", node="prefs", text="बजट की कोई problem नहीं, बस square वाला चाहिए।",
+    dict(id="pref_square_nobudget", node="style", text="बजट की कोई problem नहीं, बस square वाला चाहिए।",
          expect=("set_preferences", {"shape": "square"}), ents=[r"square|स्क्वेयर|स्क्वायर|चौकोर"]),
-    dict(id="pref_800", node="prefs", text="आठ सौ रुपये से ज़्यादा नहीं।",
+    dict(id="pref_800", node="style", text="आठ सौ रुपये से ज़्यादा नहीं।",
          expect=("set_preferences", {"max_price": 800}), ents=[NUM[800]]),
-    dict(id="pref_cateye", node="prefs", text="cat eye style चाहिए, ladies के लिए, अठारह सौ तक।",
+    dict(id="pref_cateye", node="style", text="cat eye style चाहिए, ladies के लिए, अठारह सौ तक।",
          expect=("set_preferences", {"max_price": 1800, "shape": "cat-eye", "gender": "female"}),
          ents=[r"cat.?eye|कैट ?आई", r"ladies|लेडीज|female", NUM[1800]]),
-    dict(id="pref_titanium", node="prefs", text="titanium वाला हल्का frame, पाँच हज़ार तक।",
+    dict(id="pref_titanium", node="style", text="titanium वाला हल्का frame, पाँच हज़ार तक।",
          expect=("set_preferences", {"max_price": 5000, "material": "titanium"}), ents=[r"titanium|टाइटेनियम", NUM[5000]]),
-    dict(id="show_next", node="show", text="अगला दिखाओ।",
+    dict(id="show_next", node="tryon", text="अगला दिखाओ।",
          expect=("next_frame", {}), ents=[r"अगला|agla|next"]),
-    dict(id="show_like", node="show", text="ये वाला अच्छा लग रहा है, यही लेंगे।",
-         expect=("like_frame", {}), ents=[r"अच्छा|accha|achha", r"लेंगे|lenge"]),
-    dict(id="show_dislike", node="show", text="नहीं ये पसंद नहीं आया, दूसरा दिखाइए।",
+    dict(id="show_like", node="tryon", text="ये वाला अच्छा लग रहा है, यही लेंगे।",
+         expect=("choose_frame", {}), ents=[r"अच्छा|accha|achha", r"लेंगे|lenge"]),
+    dict(id="show_dislike", node="tryon", text="नहीं ये पसंद नहीं आया, दूसरा दिखाइए।",
          expect=("next_frame", {}), ents=[r"पसंद|pasand", r"दूसरा|doosra|dusra"]),
-    dict(id="show_restyle", node="show", text="rectangular में कुछ है क्या?",
+    dict(id="show_restyle", node="tryon", text="rectangular में कुछ है क्या?",
          expect=("set_preferences", {"shape": "rectangular"}), ents=[r"rectang|रेक्टें?ग|रेक्टैंग"]),
-    dict(id="show_stop", node="show", text="बस रहने दीजिए, बाद में आऊँगा।",
-         expect=("finish", {}), ents=[r"रहने|rehne|rahne", r"बाद|baad"]),
-    dict(id="show_question", node="show", text="इसकी कीमत कितनी है?",
+    dict(id="show_stop", node="tryon", text="बस रहने दीजिए, बाद में आऊँगा।",
+         expect=("leave_for_now", {}), ents=[r"रहने|rehne|rahne", r"बाद|baad"]),
+    dict(id="show_question", node="tryon", text="इसकी कीमत कितनी है?",
          expect=(None, {}), ents=[r"कीमत|keemat|kimat|price"]),
-    dict(id="liked_exec", node="liked", text="हाँ, executive से बात करवा दीजिए।",
-         expect=("wants_executive", {}), ents=[r"executive|एग्जीक्यूटिव|एक्जीक्यूटिव"]),
-    dict(id="lead_contact", node="lead",
+    dict(id="liked_exec", node="tryon", text="हाँ, executive से बात करवा दीजिए।",
+         expect=("talk_to_staff", {}), ents=[r"executive|एग्जीक्यूटिव|एक्जीक्यूटिव"]),
+    dict(id="lead_contact", node="close",
          text="मेरा नाम राहुल शर्मा है, नंबर है नौ आठ सात छह पाँच चार तीन दो एक शून्य।",
          expect=("save_contact", {"phone": "9876543210"}),
          ents=[r"राहुल|rahul", r"शर्मा|sharma", r"9 ?8 ?7 ?6 ?5 ?4 ?3 ?2 ?1 ?0|नौ ?आठ ?सात"]),
@@ -274,27 +274,30 @@ async def run_stt(only: list[str] | None = None):
 # LLM (stage 2)
 # ---------------------------------------------------------------------------
 def node_for(name: str):
+    """Build the real flow node the utterance is heard in (flow.py)."""
     import flow as F
 
     sf = F.StoreFlow(None)
-    frame = {"sku": "EN-1001", "name": "Classic Aviator", "brand": "Vincent Chase", "price": 1200,
-             "shape": "aviator", "material": "metal", "gender": "male", "stock": 5}
-    if name == "greet":
-        return sf.greet_node(), F.ROLE
-    if name == "prefs":
-        return sf.prefs_node(), F.ROLE
-    if name == "show":
-        return sf.show_node([frame, frame], 0), F.ROLE
 
     class FM:  # minimal flow manager for the node builders
-        state = {"frames": [frame], "idx": 0}
+        def __init__(self):
+            self.state = {}
+            self.current_node = None
 
-    if name == "liked":
-        _, node = asyncio.run(sf._like_frame({}, FM()))
-        return node, F.ROLE
-    if name == "lead":
-        _, node = asyncio.run(sf._wants_executive({}, FM()))
-        return node, F.ROLE
+    fm = FM()
+    if name == "greet":
+        return sf.greet_node(), F.ROLE
+    if name == "style":
+        return sf.style_node(), F.ROLE
+    fm.state["profile"] = {"need": "power"}
+    frames, _ = F.curate({"frame_type": "frame"})
+    if name == "tryon":
+        fm.state["set"] = frames
+        return sf._tryon(fm, 0), F.ROLE
+    if name == "close":
+        fm.state["chosen"] = frames[0]
+        fm.state["lens"] = None
+        return sf._close(fm), F.ROLE
     raise KeyError(name)
 
 

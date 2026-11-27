@@ -22,7 +22,12 @@ _NEXT = re.compile(
     re.I,
 )
 _LIKE = re.compile(
-    r"पसंद\s*(?:है|आया|आ\s*गया|हैं)|अच्छा\s*(?:है|लग)|अच्छी\s*(?:है|लग)|बढ़िया\s*है|यही\s*(?:लूँगा|लूंगा|लेंगे|लूँगी|लूंगी|चाहिए|वाला)|ये\s*(?:वाला\s*)?(?:लूँगा|लूंगा|लेंगे|ले\s*लेंगे)|फ़ाइनल|फाइनल|\bpasand\s*(?:hai|aaya|aya)\b|\b(?:accha|achha|acha)\s*(?:hai|lag)\b|\byahi\b|\bfinal\b|\bi\s*like\b",
+    r"पसंद\s*(?:है|आया|आ\s*गया|हैं)|अच्छा\s*(?:है|लग)|अच्छी\s*(?:है|लग)|बढ़िया\s*है|\bpasand\s*(?:hai|aaya|aya)\b|\b(?:accha|achha|acha)\s*(?:hai|lag)\b|\bi\s*like\b",
+    re.I,
+)
+# "I'll take this one" — a decision, not just a like.
+_FINAL = re.compile(
+    r"यही\s*(?:लूँगा|लूंगा|लेंगे|लूँगी|लूंगी|चाहिए|फ़ाइनल|फाइनल)|ये\s*(?:वाला\s*)?(?:लूँगा|लूंगा|लेंगे|ले\s*लेंगे|ले\s*लूँगा|फ़ाइनल|फाइनल)|इसे\s*(?:फ़ाइनल|फाइनल)|फ़ाइनल\s*(?:कर|है)|फाइनल\s*(?:कर|है)|\byahi\s*(?:lunga|lenge|chahiye)\b|\bfinal\b",
     re.I,
 )
 _YES = re.compile(r"^(?:हाँ|हां|हा|जी\s*हाँ|जी\s*हां|हाँ\s*जी|हां\s*जी|ज़रूर|जरूर|ठीक\s*है|बिल्कुल|ओके|yes|haan|han|ji|ok|okay|sure|zaroor)(?=[\s।,.!]|$)", re.I)
@@ -43,15 +48,18 @@ def fast_intent(text: str, available: set[str]) -> str | None:
     question = bool(_QUESTION.search(t))
 
     contrast = bool(re.search(r"\sपर\s|लेकिन|मगर|\bbut\b|\bpar\b|\blekin\b", t))
-    if "wants_executive" in available and not (neg or question or contrast or _NEXT.search(t)):
-        if _YES.search(t) or _EXEC.search(t):
-            return "wants_executive"
+    if neg or question or contrast:
+        # "पसंद नहीं, दूसरा दिखाइए" → next (negated like + next) is the one safe negation.
+        if neg and not question and "next_frame" in available and _NEXT.search(t) and not _FINAL.search(t):
+            return "next_frame"
+        return None
 
+    if "choose_frame" in available and _FINAL.search(t) and not _NEXT.search(t):
+        return "choose_frame"
     if "like_frame" in available and "next_frame" in available:
         like, nxt = bool(_LIKE.search(t)), bool(_NEXT.search(t))
-        # "पसंद नहीं, दूसरा दिखाइए" → next (negated like + next).
-        if nxt and not (like and not neg) and not question:
+        if nxt and not like:
             return "next_frame"
-        if like and not nxt and not neg and not question:
+        if like and not nxt:
             return "like_frame"
     return None

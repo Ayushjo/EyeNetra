@@ -11,8 +11,8 @@ from pathlib import Path
 
 from fast_intent import fast_intent
 
-SHOW = {"next_frame", "like_frame", "set_preferences", "finish", "notify_staff", "recommend_lens"}
-LIKED = {"wants_executive", "next_frame", "finish", "notify_staff", "recommend_lens"}
+SHOW = {"next_frame", "prev_frame", "show_option", "like_frame", "choose_frame", "set_preferences",
+        "talk_to_staff", "leave_for_now"}
 results = []
 
 
@@ -26,27 +26,24 @@ cases = [
     (SHOW, "दूसरा दिखाइए", "next_frame"),
     (SHOW, "नहीं ये पसंद नहीं आया, दूसरा दिखाइए।", "next_frame"),
     (SHOW, "next please", "next_frame"),
-    (SHOW, "ये वाला अच्छा लग रहा है, यही लेंगे।", "like_frame"),
-    (SHOW, "हाँ, ये वाला अच्छा है, यही लूँगा।", "like_frame"),
     (SHOW, "पसंद आया", "like_frame"),
+    (SHOW, "ये अच्छा लग रहा है", "like_frame"),
+    (SHOW, "ये वाला अच्छा लग रहा है, यही लेंगे।", "choose_frame"),
+    (SHOW, "हाँ, ये वाला अच्छा है, यही लूँगा।", "choose_frame"),
+    (SHOW, "इसे फ़ाइनल कर दीजिए", "choose_frame"),
     (SHOW, "पसंद नहीं आया", None),            # negated like without "next" → LLM decides
+    (SHOW, "यही लूँगा नहीं, अगला दिखाओ", None),  # contradictory → LLM
     (SHOW, "इसकी कीमत कितनी है?", None),       # question → LLM
     (SHOW, "क्या अगला वाला सस्ता है?", None),   # question → LLM
     (SHOW, "rectangular में कुछ है क्या?", None),
     (SHOW, "बस रहने दीजिए, बाद में आऊँगा।", None),
     (SHOW, "अच्छा है पर अगला भी दिखाओ", None),  # mixed → LLM
-    (LIKED, "हाँ, executive से बात करवा दीजिए।", "wants_executive"),
-    (LIKED, "हाँ जी", "wants_executive"),
-    (LIKED, "नहीं, अभी नहीं", None),
-    (LIKED, "हाँ पर पहले अगला दिखाओ", None),     # "हाँ" + next: not a clean yes … see below
+    (SHOW, "staff को बुलाइए", None),            # handoff is always the LLM's call
     ({"record_need"}, "अगला दिखाओ", None),     # node without those functions
+    ({"next_frame", "like_frame"}, "यही लूँगा", None),  # no choose_frame offered → LLM
 ]
 for avail, text, want in cases:
     got = fast_intent(text, avail)
-    if text == "हाँ पर पहले अगला दिखाओ":
-        # Acceptable outcomes: LLM (None) or next_frame — never wants_executive.
-        check(f"{text!r} → not wants_executive (got {got})", got != "wants_executive")
-        continue
     check(f"{text!r} → {want} (got {got})", got == want)
 
 # Replay the eval set's STT transcripts (incl. crowded shop): count wrong actions.
@@ -60,7 +57,7 @@ if cache.exists():
     for key, text in stt.items():
         _cfg, tid, _v, _cond = key.split("|")
         t = by_id[tid]
-        avail = {"show": SHOW, "liked": LIKED}.get(t["node"])
+        avail = {"tryon": SHOW}.get(t["node"])
         if not avail:
             continue
         got = fast_intent(text, avail)

@@ -526,7 +526,7 @@ async def bot(runner_args: RunnerArguments) -> None:
         """Lead step asks for name AND number: a turn with the name but
         fewer than 10 digits is held briefly for the number to follow."""
         fm = flow_ref.get("fm")
-        if not fm or fm.current_node != "lead":
+        if not fm or fm.current_node != "close":
             return False
         if re.search(r"नहीं|नही|\bnahi|\bno\b|मत", text, re.I):
             return False  # declining to share
@@ -607,6 +607,20 @@ async def bot(runner_args: RunnerArguments) -> None:
     )
     store_flow.register(flow_manager)
     flow_ref["fm"] = flow_manager
+
+    # The kiosk's "स्टाफ़ को बुलाएँ" button: the customer does not want to
+    # continue with the AI. Speak one line, record the handoff, step back.
+    rtvi = task.rtvi
+
+    @rtvi.event_handler("on_client_message")
+    async def on_client_message(rtvi, msg):
+        if getattr(msg, "type", None) != "handoff":
+            return
+        logger.info(f"Kiosk asked for staff: {msg.data}")
+        try:
+            await flow_manager.set_node_from_config(store_flow.handoff_node(flow_manager, "customer_button"))
+        except Exception as e:  # never crash the call over this
+            logger.error(f"handoff from kiosk failed: {e}")
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
