@@ -63,11 +63,23 @@ SHAPES = ["round", "rectangular", "square", "aviator", "cat-eye", "oval"]
 # Sends one UI event to the try-on page (RTVI server message). Kinds:
 #   try_on_frame {sku, name, brand, frameId, variantId, price, shape, index, total}
 #   liked {sku}        session_end {}
+#   stage {stage}      which step the conversation is on (the page offers
+#                      quick replies that fit it — text mode)
 PushTryOn = Callable[[dict], Awaitable[None]]
 
 
 def _say(text: str) -> dict:
     return {"type": "tts_say", "text": text}
+
+
+def _stage(name: str) -> dict:
+    """Tell the page which step the conversation is on (after the spoken line)."""
+    return {"type": "ui_stage", "stage": name}
+
+
+def rupees_text(price: int) -> str:
+    """Written price for captions, e.g. 2499 → "₹2,499" (text mode: read, not heard)."""
+    return f"₹{int(price):,}"
 
 
 def _frame_facts(f: dict) -> str:
@@ -99,12 +111,16 @@ def find_frames(prefs: dict) -> tuple[list[dict], bool]:
 class StoreFlow:
     """Builds the nodes; handlers are bound methods (args, flow_manager)."""
 
-    def __init__(self, push_tryon: PushTryOn):
+    def __init__(self, push_tryon: PushTryOn, text_mode: bool = False):
         self._push_tryon = push_tryon
+        # Voice: prices as Devanagari words for TTS. Text mode: the customer
+        # reads them in captions, so digits ("₹1,200") are clearer.
+        self._price = rupees_text if text_mode else rupees
 
     # -- wiring ------------------------------------------------------------
     def register(self, flow_manager: FlowManager) -> None:
         flow_manager.register_action("show_tryon", self._show_tryon_action)
+        flow_manager.register_action("ui_stage", self._stage_action)
 
     def global_functions(self) -> list[FlowsFunctionSchema]:
         return [
@@ -150,6 +166,9 @@ class StoreFlow:
         else:
             logger.warning(f"show_tryon: {sku} could not be shown: {result}")
 
+    async def _stage_action(self, action: dict, flow_manager: FlowManager) -> None:
+        await self._event({"kind": "stage", "stage": action.get("stage", "")})
+
     async def _notify_staff(self, args: dict, flow_manager: FlowManager):
         return execute_tool("notify_staff", args), None
 
@@ -170,7 +189,7 @@ class StoreFlow:
                     "If unclear, ask one short question."
                 ),
             }],
-            "pre_actions": [_say(GREETING)] if speak else [],
+            "pre_actions": ([_say(GREETING)] if speak else []) + [_stage("greet")],
             "respond_immediately": False,
             "functions": [self._record_need_fn()],
         }
@@ -218,7 +237,7 @@ class StoreFlow:
                     "Otherwise answer briefly."
                 ),
             }],
-            "pre_actions": [_say(line)],
+            "pre_actions": [_say(line), _stage("info")],
             "respond_immediately": False,
             "functions": [self._record_need_fn()],
         }
@@ -235,7 +254,7 @@ class StoreFlow:
                     "follow-up question; never ask more than budget and style."
                 ),
             }],
-            "pre_actions": [_say(line)] if line else [],
+            "pre_actions": ([_say(line)] if line else []) + [_stage("prefs")],
             "respond_immediately": False,
             "functions": [self._set_preferences_fn()],
         }
@@ -268,7 +287,7 @@ class StoreFlow:
     def show_node(self, frames: list[dict], idx: int, intro: str | None = None) -> NodeConfig:
         f = frames[idx]
         template = FIRST_FRAME if idx == 0 else NEXT_FRAME
-        line = template.format(brand=f["brand"], name=f["name"], price=rupees(f["price"]))
+        line = template.format(brand=f["brand"], name=f["name"], price=self._price(f["price"]))
         if intro:
             line = f"{intro} {line}"
         return {
@@ -288,6 +307,7 @@ class StoreFlow:
                 {"type": "show_tryon", "sku": f["sku"], "price": f["price"], "shape": f["shape"],
                  "index": idx, "total": len(frames)},
                 _say(f"{line} {ASK_NEXT}"),
+                _stage("show"),
             ],
             "respond_immediately": False,
             "functions": [
@@ -319,7 +339,7 @@ class StoreFlow:
                     "See them again → show_again. Stop → finish."
                 ),
             }],
-            "pre_actions": [_say(END_OF_LIST)],
+            "pre_actions": [_say(END_OF_LIST), _stage("end_of_list")],
             "respond_immediately": False,
             "functions": [
                 self._set_preferences_fn(),
@@ -349,7 +369,7 @@ class StoreFlow:
                     "Wants to keep looking → next_frame. No / done → finish."
                 ),
             }],
-            "pre_actions": [_say(LIKED.format(name=f["name"], price=rupees(f["price"])))],
+            "pre_actions": [_say(LIKED.format(name=f["name"], price=self._price(f["price"]))), _stage("liked")],
             "respond_immediately": False,
             "functions": [
                 self._simple_fn("wants_executive", "Customer agrees to meet an executive.", self._wants_executive),
@@ -368,7 +388,7 @@ class StoreFlow:
                     "Then call save_contact. If they don't want to share, call finish."
                 ),
             }],
-            "pre_actions": [_say(ASK_NAME)],
+            "pre_actions": [_say(ASK_NAME), _stage("lead")],
             "respond_immediately": False,
             "functions": [
                 FlowsFunctionSchema(
@@ -421,7 +441,7 @@ class StoreFlow:
                 "role": "developer",
                 "content": "If the customer speaks again and wants frames or sunglasses, call record_need.",
             }],
-            "pre_actions": [_say(line)],
+            "pre_actions": [_say(line), _stage("goodbye")],
             "respond_immediately": False,
             "functions": [self._record_need_fn()],
         }

@@ -9,7 +9,10 @@ let landmarkerPromise: Promise<FaceLandmarker> | null = null;
 
 // MediaPipe's WASM prints its TFLite/XNNPACK init notes through console.error
 // asynchronously (outside any detect() call), which Next's dev overlay counts
-// as an application error. Drop just those known info lines, once, globally.
+// as an application error. Drop just those known info lines, once, globally —
+// installed when this module loads, before any MediaPipe code runs. (It used
+// to be installed inside a temporary console swap, whose restore threw the
+// filter away, so the dev overlay kept reporting a false "issue".)
 const MEDIAPIPE_NOISE = /Created TensorFlow Lite|XNNPACK|^INFO:|^W0000|inference_feedback_manager/;
 let consoleFiltered = false;
 function filterMediapipeConsoleNoise() {
@@ -23,6 +26,7 @@ function filterMediapipeConsoleNoise() {
     };
   }
 }
+if (typeof window !== "undefined") filterMediapipeConsoleNoise();
 
 /**
  * Lazily create a singleton FaceLandmarker in VIDEO mode.

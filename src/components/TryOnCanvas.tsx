@@ -22,6 +22,7 @@ import { VideoBackground } from "@/components/VideoBackground";
 import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
 import { FRAMES, getFrameById } from "@/data/frames";
+import { SHOP_HDRI } from "@/lib/hdri";
 
 /**
  * Option (b): parent anchor receives matrix pose each frame; glasses mesh is a
@@ -171,6 +172,25 @@ function Cameras() {
   );
 }
 
+/** Scales the HDRI's light on every material (their envMapIntensity still applies). */
+const SHOP_HDRI_INTENSITY = 1;
+
+/**
+ * Self-contained studio env map: soft box lights that give metal temples and
+ * lenses specular highlights + reflections. Rendered once into a 128 px cube.
+ * Now only the stand-in while the shop HDRI loads.
+ */
+function StudioEnvironment() {
+  return (
+    <Environment resolution={128} background={false}>
+      <Lightformer intensity={2.2} position={[0, 1.5, 3]} scale={[6, 3, 1]} color="#ffffff" />
+      <Lightformer intensity={1.1} position={[-3, 0.5, 2]} scale={[3, 4, 1]} color="#dfe8ff" />
+      <Lightformer intensity={1.1} position={[3, 0.5, 2]} scale={[3, 4, 1]} color="#fff2e0" />
+      <Lightformer intensity={0.8} position={[0, -2, 1]} scale={[6, 2, 1]} color="#cfd6e0" />
+    </Environment>
+  );
+}
+
 function Scene() {
   const light = useTryOnStore((s) => s.lightEstimate);
   const renderMode = useTryOnStore((s) => s.renderMode);
@@ -184,35 +204,18 @@ function Scene() {
       <ambientLight intensity={light.ambient} color={tint} />
       <directionalLight position={[2, 3, 4]} intensity={light.key} color={tint} />
       <directionalLight position={[-3, 1, 2]} intensity={light.key * 0.4} />
-      {/* Self-contained studio env map (no external HDRI): soft box lights that
-          give metal temples and lenses real specular highlights + reflections.
-          background={false} keeps the overlay transparent over the webcam. */}
-      <Environment resolution={128} background={false}>
-        <Lightformer
-          intensity={2.2}
-          position={[0, 1.5, 3]}
-          scale={[6, 3, 1]}
-          color="#ffffff"
+      {/* Reflections + image-based light from a real shop interior (HDRI,
+          served locally — public/hdri/README.md). Loaded and pre-filtered
+          once; per frame it is only a texture lookup in the materials.
+          background={false} keeps the overlay transparent over the webcam.
+          Until the file has loaded, the studio panels stand in. */}
+      <Suspense fallback={<StudioEnvironment />}>
+        <Environment
+          files={SHOP_HDRI}
+          background={false}
+          environmentIntensity={SHOP_HDRI_INTENSITY}
         />
-        <Lightformer
-          intensity={1.1}
-          position={[-3, 0.5, 2]}
-          scale={[3, 4, 1]}
-          color="#dfe8ff"
-        />
-        <Lightformer
-          intensity={1.1}
-          position={[3, 0.5, 2]}
-          scale={[3, 4, 1]}
-          color="#fff2e0"
-        />
-        <Lightformer
-          intensity={0.8}
-          position={[0, -2, 1]}
-          scale={[6, 2, 1]}
-          color="#cfd6e0"
-        />
-      </Environment>
+      </Suspense>
       {/* Real face-mesh depth occluder (perspective): precise front/side temple
           occlusion. The anchor ellipsoid inside GlassesAnchor still covers the
           back of the head for the far temple on strong turns. */}
@@ -224,19 +227,49 @@ function Scene() {
 /** Wait this long for the browser to restore a lost context before rebuilding. */
 const CONTEXT_RESTORE_WAIT_MS = 1000;
 
+/**
+ * Most pixels the 3D canvas renders per frame (MSAA, tone mapping, the video
+ * background). The mirror can fill a large screen now; a flat 1.5× device
+ * pixel ratio there meant ~2.2 MP a frame on an integrated GPU, and that GPU
+ * time also delays the tracker's frame readback.
+ */
+const MAX_RENDER_PIXELS = 1.4e6;
+
+/** Device pixel ratio for the canvas: ≤ 1.5, ≤ the screen's, within budget. */
+function useRenderDpr(ref: React.RefObject<HTMLDivElement | null>): number {
+  const [dpr, setDpr] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const budget = Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, width * height));
+      const next = Math.max(1, Math.min(1.5, window.devicePixelRatio || 1, budget));
+      setDpr(Math.round(next * 20) / 20);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return dpr;
+}
+
 export function TryOnCanvas({ className = "" }: { className?: string }) {
   // Bumping the key remounts the Canvas with a fresh WebGL context. A lost
   // context otherwise leaves the last frame on screen forever (live: glasses
   // frozen beside the face while tracking kept running).
   const [canvasKey, setCanvasKey] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const dpr = useRenderDpr(boxRef);
   useEffect(() => {
     preloadCatalogueModels(FRAMES.map((f) => f.glbPath));
   }, []);
   return (
-    <div className={`pointer-events-none absolute inset-0 z-20 ${className}`}>
+    <div ref={boxRef} className={`pointer-events-none absolute inset-0 z-20 ${className}`}>
       <Canvas
         key={canvasKey}
-        dpr={[1, 1.5]}
+        dpr={dpr}
         gl={{
           antialias: true,
           alpha: true,

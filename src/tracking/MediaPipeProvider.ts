@@ -16,35 +16,14 @@ type VideoWithFrameCallback = HTMLVideoElement & {
   cancelVideoFrameCallback: (handle: number) => void;
 };
 
-function silenceMediapipeConsole<T>(fn: () => T): T {
-  const originalError = console.error;
-  const originalWarn = console.warn;
-  const filter = (...args: unknown[]) => {
-    const text = args.map(String).join(" ");
-    if (
-      text.includes("TensorFlow Lite") ||
-      text.includes("XNNPACK") ||
-      text.includes("Created TensorFlow") ||
-      text.includes("W0000") ||
-      text.includes("INFO:")
-    ) {
-      return;
-    }
-    originalError.apply(console, args as Parameters<typeof console.error>);
-  };
-  console.error = filter as typeof console.error;
-  console.warn = ((...args: unknown[]) => {
-    const text = args.map(String).join(" ");
-    if (text.includes("TensorFlow") || text.includes("XNNPACK")) return;
-    originalWarn.apply(console, args as Parameters<typeof console.warn>);
-  }) as typeof console.warn;
-  try {
-    return fn();
-  } finally {
-    console.error = originalError;
-    console.warn = originalWarn;
-  }
-}
+/**
+ * Longest side of the image handed to the detector. MediaPipe crops the face
+ * and resizes it to 192–256 px internally, so a full 1280×720 frame buys no
+ * accuracy — but the CPU path must read every input pixel back from the GPU,
+ * and that readback was the tracker's main cost (≈ 4× the inference itself
+ * at 720p). 960 keeps iris landmarks (fit-size measurement) sharp.
+ */
+const DETECT_MAX_SIDE = 960;
 
 /**
  * Current MediaPipe FaceLandmarker + computePose, behind TrackingProvider.
@@ -63,6 +42,9 @@ export class MediaPipeProvider implements TrackingProvider {
   private fpsWindowStart = 0;
   private latest: TrackingFrame | null = null;
   private lastPnpLogMs = 0;
+  /** Downscaled copy of the frame the detector analyses (GPU 2D canvas). */
+  private detectCanvas: OffscreenCanvas | HTMLCanvasElement | null = null;
+  private detectCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
   private onStatus?: (s: "loading" | "ready" | "error", err?: string) => void;
   private onFps?: (fps: number) => void;
 
@@ -90,9 +72,7 @@ export class MediaPipeProvider implements TrackingProvider {
     this.onStatus?.("loading");
 
     try {
-      const landmarker = await silenceMediapipeConsole(() =>
-        getFaceLandmarker(),
-      );
+      const landmarker = await getFaceLandmarker();
       if (this.cancelled) return;
       this.onStatus?.("ready");
 
@@ -114,11 +94,9 @@ export class MediaPipeProvider implements TrackingProvider {
         this.timestampMs = Math.max(this.timestampMs + 1, Math.floor(now));
 
         try {
-          // Show exactly the frame the detector analyses (frameSync.ts).
+          // SYNC display only: show exactly the frame the detector analyses.
           presentFrame(v);
-          const result = silenceMediapipeConsole(() =>
-            landmarker.detectForVideo(v, this.timestampMs),
-          );
+          const result = landmarker.detectForVideo(this.detectSource(v), this.timestampMs);
           const face = result.faceLandmarks[0] ?? null;
           const matrix = result.facialTransformationMatrixes[0];
           const landmarks = face
@@ -188,6 +166,33 @@ export class MediaPipeProvider implements TrackingProvider {
     }
   }
 
+  /**
+   * The frame to detect on: the video itself if it is already small, else a
+   * downscaled copy (one GPU drawImage, ~0.3 ms). Landmarks are normalised,
+   * so the smaller image yields the same coordinates.
+   */
+  private detectSource(v: HTMLVideoElement): TexImageSource {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const scale = Math.min(1, DETECT_MAX_SIDE / Math.max(vw, vh));
+    if (scale >= 1 || !vw || !vh) return v;
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
+    if (!this.detectCanvas || this.detectCanvas.width !== w || this.detectCanvas.height !== h) {
+      this.detectCanvas =
+        typeof OffscreenCanvas !== "undefined"
+          ? new OffscreenCanvas(w, h)
+          : Object.assign(document.createElement("canvas"), { width: w, height: h });
+      // Never read back on the CPU: the canvas must stay GPU-backed so the
+      // detector's upload of it is a GPU copy.
+      this.detectCtx = this.detectCanvas.getContext("2d", { alpha: false }) as
+        | OffscreenCanvasRenderingContext2D
+        | CanvasRenderingContext2D
+        | null;
+    }
+    if (!this.detectCtx) return v;
+    this.detectCtx.drawImage(v, 0, 0, w, h);
+    return this.detectCanvas;
+  }
+
   private tickFn:
     | ((now: number, metadata?: VideoFrameMetadata) => void)
     | null = null;
@@ -220,5 +225,7 @@ export class MediaPipeProvider implements TrackingProvider {
     this.video = null;
     this.tickFn = null;
     this.latest = null;
+    this.detectCanvas = null;
+    this.detectCtx = null;
   }
 }

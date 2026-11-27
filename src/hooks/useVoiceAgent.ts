@@ -6,9 +6,11 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import {
   useVoiceStore,
   voiceLevels,
+  type ConversationStage,
   type TranscriptLine,
   type TryOnSuggestion,
 } from "@/store/voiceStore";
+import { useUiStore } from "@/store/uiStore";
 
 export type { TranscriptLine, TryOnSuggestion, VoiceStatus } from "@/store/voiceStore";
 
@@ -24,6 +26,21 @@ export type UseVoiceAgentOptions = {
    */
   onTryOnFrame?: (suggestion: TryOnSuggestion) => void;
 };
+
+/**
+ * Text mode is chosen per session through the offer URL: bot.py reads the
+ * runner's session_id (the runner drops the client's camelCase requestData).
+ */
+function textModeEndpoint(endpoint: string): string {
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${endpoint}${endpoint.includes("?") ? "&" : "?"}session_id=text-${id}`;
+}
+
+/** Typed text waits at most this long for the greeting to finish. */
+const PENDING_TEXT_MAX_WAIT_MS = 6000;
 
 /** Words from successive TTS chunks: chunks carry no reliable spacing. */
 function joinSpoken(prev: string, next: string): string {
@@ -80,6 +97,54 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const metersRef = useRef<(() => void)[]>([]);
+  /** Text typed before the session was ready (sent after the greeting). */
+  const pendingTextRef = useRef<string | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** connect() resolved: the bot answered bot-ready and accepts send-text. */
+  const botReadyRef = useRef(false);
+  /**
+   * The bot finished its first utterance (the greeting). It can finish
+   * before the SDK's onConnected fires, so this is tracked on its own.
+   */
+  const greetedRef = useRef(false);
+
+  const pushLine = useCallback((role: TranscriptLine["role"], text: string) => {
+    const id = ++lineIdRef.current;
+    useVoiceStore.setState((s) => ({ transcript: [...s.transcript, { id, role, text }] }));
+    return id;
+  }, []);
+
+  /** Hand typed text to the bot (RTVI send-text → context → LLM). */
+  const deliverText = useCallback(async (client: PipecatClient, text: string) => {
+    try {
+      await client.sendText(text);
+    } catch (e) {
+      useVoiceStore.setState((s) => ({
+        errorMessage: e instanceof Error ? e.message : "Message not sent",
+        phase: s.phase === "thinking" ? "listening" : s.phase,
+      }));
+    }
+  }, []);
+
+  /**
+   * Send text typed before the session was ready: once the bot is ready and
+   * its greeting has finished (so the reply doesn't cut the greeting off), or
+   * on `force` (the greeting never came).
+   */
+  const flushPending = useCallback((force = false) => {
+    const text = pendingTextRef.current;
+    const client = clientRef.current;
+    if (!text || !client || !botReadyRef.current) return;
+    if (!greetedRef.current && !force) return;
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    pendingTimerRef.current = null;
+    pendingTextRef.current = null;
+    botLineIdRef.current = null;
+    pushLine("user", text);
+    // botCaption cleared: the greeting stops showing once their message is sent.
+    useVoiceStore.setState({ phase: "thinking", userInterim: "", botCaption: "" });
+    void deliverText(client, text);
+  }, [deliverText, pushLine]);
 
   const releaseAudio = useCallback(() => {
     for (const el of audioElsRef.current) {
@@ -106,37 +171,41 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const connect = useCallback(async () => {
     if (clientRef.current) return;
     const set = useVoiceStore.setState;
+    const textMode = useUiStore.getState().inputMode === "text";
     set({
       status: "connecting",
-      phase: "connecting",
+      // A message typed before connecting already shows "thinking".
+      phase: pendingTextRef.current ? "thinking" : "connecting",
       errorMessage: null,
-      userInterim: "",
+      // A message typed before connecting stays on screen until it is sent.
+      userInterim: pendingTextRef.current ?? "",
       botCaption: "",
       ended: false,
+      stage: null,
     });
     botLineIdRef.current = null;
-
-    const pushLine = (role: TranscriptLine["role"], text: string) => {
-      const id = ++lineIdRef.current;
-      set((s) => ({ transcript: [...s.transcript, { id, role, text }] }));
-      return id;
-    };
+    botReadyRef.current = false;
+    greetedRef.current = false;
 
     const transport = new SmallWebRTCTransport();
     const client = new PipecatClient({
       transport,
-      enableMic: true,
+      // Text mode never asks for the microphone.
+      enableMic: !textMode,
       enableCam: false,
       callbacks: {
         onConnected: () => {
-          set({ status: "connected", phase: "listening" });
+          set((s) => ({ status: "connected", phase: s.phase === "thinking" ? "thinking" : "listening" }));
           const mic = client.tracks().local.audio;
           if (mic) meter(mic, "mic");
         },
         onDisconnected: () => {
           clientRef.current = null;
+          pendingTextRef.current = null;
+          botReadyRef.current = false;
           releaseAudio();
-          set({ status: "idle", phase: "off", userInterim: "" });
+          // A new session starts from the greeting: its quick replies too.
+          set({ status: "idle", phase: "off", userInterim: "", stage: null });
         },
         onError: (msg) => {
           const data = msg.data as Record<string, unknown> | string | undefined;
@@ -153,12 +222,21 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
               : { errorMessage: text ? String(text) : "Voice agent error", status: "error", phase: "error" },
           );
         },
-        onUserStartedSpeaking: () => set({ phase: "user" }),
+        // No mic in text mode: "user speaking" events there mean nothing
+        // and would flip the phase (and the captions) mid-reply.
+        onUserStartedSpeaking: () => {
+          if (!textMode) set({ phase: "user" });
+        },
         onUserStoppedSpeaking: () =>
+          !textMode &&
           set((s) => (s.phase === "user" ? { phase: "thinking" } : {})),
         onBotStartedSpeaking: () => set({ phase: "speaking" }),
-        onBotStoppedSpeaking: () =>
-          set((s) => (s.phase === "speaking" ? { phase: "listening" } : {})),
+        onBotStoppedSpeaking: () => {
+          set((s) => (s.phase === "speaking" ? { phase: "listening" } : {}));
+          // A message typed while the greeting played goes out once it ends.
+          greetedRef.current = true;
+          flushPending();
+        },
         // The bot's audio arrives as a remote WebRTC track — the transport
         // emits it but nothing plays it until we attach it to an <audio>.
         onTrackStarted: (track: MediaStreamTrack, participant) => {
@@ -235,6 +313,9 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
             }));
           } else if (msg?.kind === "session_end") {
             set({ ended: true });
+          } else if (msg?.kind === "stage") {
+            const stage = (msg as { stage?: string }).stage;
+            if (stage) set({ stage: stage as ConversationStage });
           }
         },
       },
@@ -242,9 +323,20 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
     clientRef.current = client;
     try {
-      await client.connect({ webrtcRequestParams: { endpoint } });
+      await client.connect({
+        webrtcRequestParams: { endpoint: textMode ? textModeEndpoint(endpoint) : endpoint },
+      });
+      botReadyRef.current = true;
+      // Typed before connecting: send now if the greeting already finished,
+      // else when it does — or after a short wait if it never comes.
+      flushPending();
+      if (pendingTextRef.current) {
+        if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = setTimeout(() => flushPending(true), PENDING_TEXT_MAX_WAIT_MS);
+      }
     } catch (e) {
       clientRef.current = null;
+      pendingTextRef.current = null;
       releaseAudio();
       set({
         status: "error",
@@ -257,11 +349,40 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         // already failed — nothing to clean up
       }
     }
-  }, [endpoint, meter, releaseAudio]);
+  }, [endpoint, meter, releaseAudio, pushLine, flushPending]);
+
+  /**
+   * A typed message or quick reply. Shown at once as the customer's line;
+   * sent now if the session is up, else after connecting and the greeting.
+   */
+  const send = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      if (!text) return;
+      const client = clientRef.current;
+      if (client && botReadyRef.current && greetedRef.current && !pendingTextRef.current) {
+        botLineIdRef.current = null; // seal the bot's previous reply
+        pushLine("user", text);
+        useVoiceStore.setState({ phase: "thinking", userInterim: "", botCaption: "", errorMessage: null });
+        void deliverText(client, text);
+        return;
+      }
+      // Not ready yet: show it as the customer's live line; it joins the
+      // transcript when it is actually sent (after the greeting).
+      pendingTextRef.current = text;
+      useVoiceStore.setState({ phase: "thinking", userInterim: text, errorMessage: null });
+      if (!client) void connect();
+    },
+    [connect, deliverText, pushLine],
+  );
 
   const disconnect = useCallback(async () => {
     const client = clientRef.current;
     clientRef.current = null;
+    pendingTextRef.current = null;
+    botReadyRef.current = false;
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    pendingTimerRef.current = null;
     releaseAudio();
     if (client) {
       try {
@@ -270,16 +391,17 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         // best-effort disconnect
       }
     }
-    useVoiceStore.setState({ status: "idle", phase: "off", userInterim: "" });
+    useVoiceStore.setState({ status: "idle", phase: "off", userInterim: "", stage: null });
   }, [releaseAudio]);
 
-  // Expose connect/disconnect to every component through the store.
+  // Expose connect/disconnect/send to every component through the store.
   useEffect(() => {
     useVoiceStore.setState({
       connect: () => void connect(),
       disconnect: () => void disconnect(),
+      send,
     });
-  }, [connect, disconnect]);
+  }, [connect, disconnect, send]);
 
   // Leave no live WebRTC connection (or held mic) behind on unmount.
   useEffect(() => {
@@ -301,5 +423,6 @@ export function resetVoiceSession() {
     userInterim: "",
     botCaption: "",
     ended: false,
+    stage: null,
   });
 }

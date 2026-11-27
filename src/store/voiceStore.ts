@@ -51,9 +51,27 @@ type VoiceState = {
   likeSeq: number;
   /** The customer finished (lead saved / goodbye) — show the summary. */
   ended: boolean;
+  /**
+   * Which step the conversation is on (bot.py → flow.py "stage" event):
+   * greet · info · prefs · show · end_of_list · liked · lead · goodbye.
+   * Picks the quick replies offered in text mode.
+   */
+  stage: ConversationStage | null;
   connect: () => void;
   disconnect: () => void;
+  /** Send a typed message / quick reply (connects first if needed). */
+  send: (text: string) => void;
 };
+
+export type ConversationStage =
+  | "greet"
+  | "info"
+  | "prefs"
+  | "show"
+  | "end_of_list"
+  | "liked"
+  | "lead"
+  | "goodbye";
 
 export const useVoiceStore = create<VoiceState>(() => ({
   status: "idle",
@@ -68,8 +86,10 @@ export const useVoiceStore = create<VoiceState>(() => ({
   dropSeq: 0,
   likeSeq: 0,
   ended: false,
+  stage: null,
   connect: () => {},
   disconnect: () => {},
+  send: () => {},
 }));
 
 /**

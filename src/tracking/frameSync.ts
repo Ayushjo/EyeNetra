@@ -1,11 +1,18 @@
 /**
- * Frame-synchronous display (technique observed in Meta's web try-on,
- * docs/meta-vto-analysis.md): every processed video frame is copied into a
- * display canvas immediately before landmark detection runs on that same
- * frame, and the stage shows the canvas instead of the live <video>. The
- * glasses pose published for that detection therefore belongs to exactly the
- * pixels on screen — no face/glasses drift during head motion, and no need
- * for latency-hiding prediction.
+ * How the camera picture reaches the screen. Two modes:
+ *
+ * LIVE (default): the 3D renderer draws the <video> itself as its background
+ * on every render frame — a GPU-to-GPU texture upload — so the picture runs
+ * at the camera's frame rate whatever the tracker's speed. The glasses follow
+ * the latest detection with smoothing + constant-velocity prediction
+ * (useFitEngine), which hides most of the tracker's latency.
+ *
+ * SYNC (staff option): frame-synchronous display, the technique observed in
+ * Meta's web try-on (docs/meta-vto-analysis.md) — every processed video frame
+ * is copied into a display canvas immediately before landmark detection runs
+ * on that same frame, and the stage shows that canvas. Glasses and face can
+ * never drift apart, but the picture only updates as fast as the tracker:
+ * on a slow machine the whole mirror looks like a low-fps camera.
  */
 let displayCanvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -13,6 +20,8 @@ let painted = false;
 /** Increments on every presented frame; the GL background uploads on change. */
 let frameSeq = 0;
 let glBackground = false;
+let syncMode = false;
+let liveVideo: HTMLVideoElement | null = null;
 
 export function setFrameSyncCanvas(canvas: HTMLCanvasElement | null): void {
   displayCanvas = canvas;
@@ -22,14 +31,38 @@ export function setFrameSyncCanvas(canvas: HTMLCanvasElement | null): void {
   painted = false;
 }
 
-/** True once the display canvas is actually showing tracked frames. */
-export function frameSyncActive(): boolean {
-  return displayCanvas != null && ctx != null && painted;
+/** The camera <video> (registered by WebcamFeed) — the LIVE background source. */
+export function setLiveVideo(video: HTMLVideoElement | null): void {
+  liveVideo = video;
 }
 
-/** Copy the current video frame into the display canvas (same frame the detector sees). */
+export function getLiveVideo(): HTMLVideoElement | null {
+  return liveVideo;
+}
+
+/** Switch between LIVE (false, default) and frame-synchronous SYNC (true). */
+export function setFrameSyncMode(on: boolean): void {
+  if (syncMode === on) return;
+  syncMode = on;
+  painted = false;
+  if (!on && displayCanvas && ctx) {
+    // Leave no stale analysed frame on the DOM canvas.
+    ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+  }
+}
+
+export function frameSyncMode(): boolean {
+  return syncMode;
+}
+
+/** True once the display canvas is actually showing tracked frames (SYNC). */
+export function frameSyncActive(): boolean {
+  return syncMode && displayCanvas != null && ctx != null && painted;
+}
+
+/** SYNC: copy the current video frame into the display canvas (same frame the detector sees). */
 export function presentFrame(video: HTMLVideoElement): void {
-  if (!displayCanvas || !ctx) return;
+  if (!syncMode || !displayCanvas || !ctx) return;
   const w = video.videoWidth, h = video.videoHeight;
   if (!w || !h) return;
   if (displayCanvas.width !== w || displayCanvas.height !== h) {
@@ -42,7 +75,7 @@ export function presentFrame(video: HTMLVideoElement): void {
 }
 
 export function getFrameSyncCanvas(): HTMLCanvasElement | null {
-  return painted ? displayCanvas : null;
+  return syncMode && painted ? displayCanvas : null;
 }
 
 export function getFrameSeq(): number {
@@ -54,6 +87,7 @@ export function getFrameSeq(): number {
  * the glasses — Meta's arrangement), so the DOM canvas can hide.
  */
 export function setGlBackgroundActive(active: boolean): void {
+  if (glBackground === active) return; // called every render frame
   glBackground = active;
   if (displayCanvas) displayCanvas.style.visibility = active ? "hidden" : "visible";
 }
