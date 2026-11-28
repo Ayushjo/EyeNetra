@@ -70,6 +70,11 @@ const INNER = 0.38;
  */
 const FROST_CENTRE_SRC = "/images/wheel-frost-centre.png";
 const FROST_RIM_SRC = "/images/wheel-frost-rim.png";
+/**
+ * Shadow under frames on the dark disc: "light" (white glow, crossfading to
+ * black inside the selection box) or "dark" (black everywhere).
+ */
+const DISC_SHADOW_TONE: "light" | "dark" = "dark";
 /** Dark tint: alpha at the centre and at the rim. */
 const TINT_CENTRE = 0.6;
 const TINT_RIM = 0.38;
@@ -809,11 +814,12 @@ export function FrameWheel() {
               crossfading as a frame moves in or out of the box. Images from
               scripts/make-frame-shadow.py. Nothing behind the frames. */}
           {slots.map((s) =>
-            (
-              [
-                ["light", (1 - s.sel) * s.opacity],
-                ["dark", s.sel * s.opacity],
-              ] as const
+            (DISC_SHADOW_TONE === "dark"
+              ? ([["dark", s.opacity]] as const)
+              : ([
+                  ["light", (1 - s.sel) * s.opacity],
+                  ["dark", s.sel * s.opacity],
+                ] as const)
             ).map(([tone, opacity]) =>
               opacity > 0 ? (
                 // eslint-disable-next-line @next/next/no-img-element -- tiny static decoration, no optimisation needed

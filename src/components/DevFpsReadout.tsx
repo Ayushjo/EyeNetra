@@ -114,7 +114,32 @@ const FRAME_MS = 1000 / 30;
  * The few numbers worth watching, each with a one-line "what it measures".
  * (devMetrics collects more; add rows here when chasing something specific.)
  */
+const HIDDEN_KEY = "eyenetra.devSpeedHidden";
+
+/** Hide/show the table; remembered in this browser. */
+function useHidden(): [boolean, (on: boolean) => void] {
+  const [hidden, setState] = useState(false);
+  useEffect(() => {
+    try {
+      setState(localStorage.getItem(HIDDEN_KEY) === "1");
+    } catch {
+      // storage blocked: start shown
+    }
+  }, []);
+  const set = (on: boolean) => {
+    setState(on);
+    try {
+      if (on) localStorage.setItem(HIDDEN_KEY, "1");
+      else localStorage.removeItem(HIDDEN_KEY);
+    } catch {
+      // not remembered
+    }
+  };
+  return [hidden, set];
+}
+
 function Readout() {
+  const [hidden, setHidden] = useHidden();
   const camera = useCameraFps();
   const trackingStatus = useTryOnStore((s) => s.trackingStatus);
   const trackerFps = useTryOnStore((s) => s.fps);
@@ -184,11 +209,39 @@ function Readout() {
     },
   ];
 
+  if (hidden) {
+    return (
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => setHidden(false)}
+        className="pointer-events-auto mt-1.5 block rounded-md bg-black/55 px-2 py-0.5 font-mono text-[10px] text-white/70 hover:text-white"
+      >
+        show speed
+      </button>
+    );
+  }
+
   return (
     <table
       data-testid="dev-fps"
       className="pointer-events-none mt-1.5 rounded-md bg-black/65 font-mono text-[10px] text-white/85"
     >
+      <thead>
+        <tr>
+          <th colSpan={2} className="pl-2 pr-1 pt-1 text-right font-normal">
+            <button
+              type="button"
+              // Inside the wordmark, whose long press opens staff tools.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setHidden(true)}
+              className="pointer-events-auto rounded px-1.5 text-[10px] text-white/55 hover:bg-white/10 hover:text-white"
+            >
+              hide
+            </button>
+          </th>
+        </tr>
+      </thead>
       <tbody>
         {rows.map((r) => (
           <tr key={r.label}>
