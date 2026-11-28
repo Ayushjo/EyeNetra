@@ -23,6 +23,7 @@ import { formatRupees, SHAPE_LABEL } from "@/components/voice/VoiceStageOverlay"
 import { SHOP_HDRI } from "@/lib/hdri";
 import { useTryOnStore } from "@/store/tryOnStore";
 import { useVoiceStore } from "@/store/voiceStore";
+import { useUiStore } from "@/store/uiStore";
 
 /*
  * The frame dial on the right edge of the mirror (the customer stands left).
@@ -38,6 +39,10 @@ import { useVoiceStore } from "@/store/voiceStore";
  */
 
 const N = FRAMES.length;
+/** Heart button on the selected box (px, = Tailwind h-7 w-7). */
+const HEART_SIZE = 28;
+/** Favourites loop round the dial only from this many (no repeats on screen). */
+const FILL_DIAL = 6;
 /** Angle between neighbouring frames on the ring (~22°: five fit on screen). */
 const STEP = 0.39;
 /**
@@ -191,11 +196,17 @@ type Slot = {
   sel: number;
 };
 
-function slotsAt(L: Layout, pos: number): Slot[] {
+/**
+ * The frames on the dial around `pos`. `list` is what the dial walks: the
+ * whole catalogue (loops round), or the customer's favourites — which only
+ * loop when there are enough of them to fill the dial without repeats.
+ */
+function slotsAt(L: Layout, pos: number, list: FrameSku[], wrap: boolean): Slot[] {
   const out: Slot[] = [];
   const base = Math.round(pos);
   for (let j = -3; j <= 3; j++) {
     const idx = base + j;
+    if (!wrap && (idx < 0 || idx >= list.length)) continue;
     const d = idx - pos;
     const ad = Math.abs(d);
     if (ad > 2.6) continue;
@@ -203,7 +214,7 @@ function slotsAt(L: Layout, pos: number): Slot[] {
     const sel = clamp01(1 - ad / 0.55);
     out.push({
       idx,
-      frame: FRAMES[mod(idx, N)],
+      frame: list[mod(idx, list.length)],
       // The selected frame steps out: a little left of the ring, a little bigger.
       x: x - SELECT_SHIFT * sel,
       y,
@@ -615,7 +626,20 @@ export function FrameWheel() {
   const setFrame = useTryOnStore((s) => s.setFrame);
   const setVariant = useTryOnStore((s) => s.setVariant);
   const frame = useTryOnStore((s) => s.selectedFrame());
-  const selIdx = Math.max(0, FRAMES.findIndex((f) => f.id === selectedFrameId));
+
+  // What the dial walks: every frame, or only this visit's favourites.
+  const favourites = useUiStore((s) => s.favouriteFrameIds);
+  const favMode = useUiStore((s) => s.showFavourites);
+  const favSet = useMemo(() => new Set(favourites), [favourites]);
+  const list = useMemo(
+    () => (favMode ? FRAMES.filter((f) => favSet.has(f.id)) : FRAMES),
+    [favMode, favSet],
+  );
+  const n = list.length;
+  // Favourites loop only when they fill the dial (6+) without repeats.
+  const wrap = !favMode || n >= FILL_DIAL;
+  const listIdx = list.findIndex((f) => f.id === selectedFrameId);
+  const selIdx = Math.max(0, listIdx);
 
   // Frames the assistant showed / the customer liked this visit.
   const suggestions = useVoiceStore((s) => s.suggestions);
@@ -660,26 +684,84 @@ export function FrameWheel() {
   /** Turn to an (unwrapped) dial position and put that frame on the face. */
   const commit = useCallback(
     (target: number) => {
-      targetRef.current = target;
+      if (n === 0) return;
+      const t = wrap ? target : Math.min(n - 1, Math.max(0, target));
+      targetRef.current = t;
       animate();
-      const f = FRAMES[mod(target, N)];
+      const f = list[mod(t, n)];
       if (f.id !== useTryOnStore.getState().selectedFrameId) setFrame(f.id);
     },
-    [animate, setFrame],
+    [animate, setFrame, list, n, wrap],
   );
+
+  // Switching between all frames and favourites (or the favourites changing)
+  // renumbers the dial: jump straight to the frame on the face, no spin.
+  const listRef = useRef(list);
+  useEffect(() => {
+    if (listRef.current === list) return;
+    listRef.current = list;
+    posRef.current = targetRef.current = selIdx;
+    setPos(selIdx);
+    invalidateRef.current?.();
+  }, [list, selIdx]);
+
+  // Favourites view: opening it puts the first favourite on (if the frame on
+  // the face isn't one); anything else putting a non-favourite on the face
+  // (the assistant) goes back to all frames.
+  const enteringFavRef = useRef(false);
+  useEffect(() => {
+    if (!favMode) return;
+    if (listIdx >= 0) {
+      enteringFavRef.current = false;
+      return;
+    }
+    if (enteringFavRef.current && n > 0) {
+      enteringFavRef.current = false;
+      setFrame(list[0].id);
+    } else {
+      useUiStore.getState().setShowFavourites(false);
+    }
+  }, [favMode, listIdx, list, n, setFrame]);
+
+  // Frames the customer liked through the assistant are favourites too.
+  useEffect(() => {
+    if (liked.size) useUiStore.getState().addFavourites([...liked]);
+  }, [liked]);
+
+  const toggleFavourite = (frameId: string) => {
+    const ui = useUiStore.getState();
+    // Un-hearting the frame on the face while viewing favourites: step to a
+    // neighbouring favourite first (the store drops back to all frames when
+    // none are left).
+    if (ui.showFavourites && ui.favouriteFrameIds.includes(frameId)) {
+      const i = list.findIndex((f) => f.id === frameId);
+      const rest = list.filter((f) => f.id !== frameId);
+      if (rest.length) setFrame(rest[Math.min(Math.max(i, 0), rest.length - 1)].id);
+    }
+    ui.toggleFavourite(frameId);
+  };
+  const toggleFavView = () => {
+    const ui = useUiStore.getState();
+    enteringFavRef.current = !ui.showFavourites;
+    ui.setShowFavourites(!ui.showFavourites);
+  };
 
   // Follow the frame on the face (the assistant, or a commit above): turn
   // the short way round to it.
   useEffect(() => {
+    if (listIdx < 0 || n === 0) return;
     const t = targetRef.current;
-    if (mod(Math.round(t), N) === selIdx) return;
-    const k = Math.round((t - selIdx) / N);
-    targetRef.current = selIdx + k * N;
+    if (mod(Math.round(t), n) === selIdx && (wrap || Math.round(t) === selIdx)) return;
+    const k = wrap ? Math.round((t - selIdx) / n) : 0;
+    targetRef.current = selIdx + k * n;
     animate();
-  }, [selIdx, animate]);
+  }, [selIdx, listIdx, n, wrap, animate]);
 
   const L = useMemo(() => computeLayout(size.W, size.H), [size.W, size.H]);
-  const slots = useMemo(() => (size.W > 0 ? slotsAt(L, pos) : []), [L, pos, size.W]);
+  const slots = useMemo(
+    () => (size.W > 0 && n > 0 ? slotsAt(L, pos, list, wrap) : []),
+    [L, pos, size.W, list, n, wrap],
+  );
   const stepPx = L.R * Math.sin(STEP);
 
   // Drag to turn: vertical movement, one frame per frame spacing.
@@ -734,11 +816,17 @@ export function FrameWheel() {
   const current = variants.find((v) => v.id === selectedVariantId) ?? variants[0];
 
   return (
+    <>
     <div
       ref={boxRef}
-      // Below the bottom controls (z-40) and click-through except for the
-      // disc and its buttons: the pills/message box near it stay clickable.
-      className="pointer-events-none absolute bottom-0 right-0 top-0 z-30 w-[clamp(21rem,38%,30rem)] touch-none select-none overflow-hidden"
+      // Above the assistant overlay (z-40) so its bottom vignette doesn't dim
+      // the dial; click-through except for the disc and its buttons. (Where
+      // the disc overlaps the pills / message box — narrow screens only —
+      // the disc now wins.)
+      // overflow-clip, not -hidden: a hidden overflow can still be scrolled
+      // (focus / scrollIntoView on a button near the edge slid the whole
+      // dial sideways); clip can't scroll at all.
+      className="pointer-events-none absolute bottom-0 right-0 top-0 z-[45] w-[clamp(21rem,38%,30rem)] touch-none select-none overflow-clip"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
@@ -906,9 +994,10 @@ export function FrameWheel() {
                     }`}
                   >
                     {/* Nothing before the name: it lines up with the details
-                        under it. A liked frame's heart follows the name. */}
+                        under it. A favourite's heart follows the name (the
+                        boxed frame has its own heart button instead). */}
                     <span className="line-clamp-2">{isProduct && product ? product.name : s.frame.name}</span>
-                    {liked.has(s.frame.id) ? (
+                    {!boxed && favSet.has(s.frame.id) ? (
                       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-rose-500" fill="currentColor" aria-label="पसंद">
                         <path d={HEART} />
                       </svg>
@@ -932,8 +1021,81 @@ export function FrameWheel() {
             currentId={current.id}
             onPick={setVariant}
           />
+
+          {/* Heart in the selected box's top-right corner: outline, filled
+              once the frame is a favourite. Rides with the box, and stacks
+              above everything else in the dial (3D previews, labels). */}
+          {slots
+            .filter((s) => s.sel > 0.5)
+            .map((s) => {
+              const grow = 1 + SELECT_GROW * s.sel;
+              const fav = favSet.has(s.frame.id);
+              return (
+                <button
+                  key={`heart-${s.idx}`}
+                  type="button"
+                  onClick={() => toggleFavourite(s.frame.id)}
+                  aria-pressed={fav}
+                  aria-label={fav ? "पसंदीदा से हटाएँ" : "पसंदीदा में जोड़ें"}
+                  className="pointer-events-auto absolute z-20 grid h-7 w-7 place-items-center rounded-full transition-transform active:scale-90"
+                  style={{
+                    // Box: left = x − (pad + frameW/2)·grow, width = box.w·grow.
+                    left: s.x - (BOX_PAD + L.frameW / 2) * grow + L.box.w * grow - HEART_SIZE - 4,
+                    top: s.y - (L.box.h * grow) / 2 + 4,
+                    opacity: s.sel * s.opacity,
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className={`h-[18px] w-[18px] ${fav ? "text-rose-500" : "text-zinc-500"}`}
+                    fill={fav ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth={fav ? 0 : 1.8}
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d={HEART} />
+                  </svg>
+                </button>
+              );
+            })}
         </>
       ) : null}
     </div>
+      {/* Favourites: bottom-right corner of the mirror. A white outline
+          heart with a red count badge; turns the dial to only the favourites
+          and back (a soft white disc behind the heart while they're
+          showing). Outside the dial's layer and above the assistant overlay
+          (z-40), whose bottom vignette otherwise greys it. */}
+      <button
+        type="button"
+        onClick={toggleFavView}
+        disabled={favourites.length === 0}
+        aria-pressed={favMode}
+        aria-label={favMode ? "सभी फ्रेम दिखाएँ" : "पसंदीदा फ्रेम दिखाएँ"}
+        className={`pointer-events-auto absolute bottom-3 right-3 z-50 grid h-14 w-14 place-items-center rounded-full text-white transition sm:bottom-4 sm:right-4 ${
+          favMode ? "bg-white/20 ring-1 ring-white/60" : ""
+        }`}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          // Bold line, light shadow: a thin outline's anti-aliased edges plus
+          // a dark halo read as grey next to the white selection box.
+          className="h-8 w-8 drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.35)]"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.6}
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d={HEART} />
+        </svg>
+        {favourites.length > 0 ? (
+          <span className="absolute right-0.5 top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-red-500 px-1 text-[11px] font-semibold leading-none text-white tabular-nums shadow">
+            {favourites.length}
+          </span>
+        ) : null}
+      </button>
+    </>
   );
 }

@@ -93,6 +93,13 @@ type UiState = {
    * (TryOnCanvas.tsx) — frees GPU time for the tracker. Staff option.
    */
   paceRenderToCamera: boolean;
+  /**
+   * Frames the customer hearted this visit (catalogue ids). Not saved: on a
+   * shared kiosk the next customer starts with an empty list.
+   */
+  favouriteFrameIds: string[];
+  /** The dial shows only the favourites. */
+  showFavourites: boolean;
   /** Live readout from the running tracker (staff panel). */
   trackerStats: TrackerStats | null;
   setStaffMode: (on: boolean) => void;
@@ -100,6 +107,9 @@ type UiState = {
   setSyncDisplay: (on: boolean) => void;
   setDetectEngine: (engine: DetectEngine) => void;
   setPaceRenderToCamera: (on: boolean) => void;
+  toggleFavourite: (frameId: string) => void;
+  addFavourites: (frameIds: string[]) => void;
+  setShowFavourites: (on: boolean) => void;
   setPredictFromCapture: (on: boolean) => void;
   setLowLagSmoothing: (on: boolean) => void;
   setTrackerStats: (stats: TrackerStats | null) => void;
@@ -116,6 +126,8 @@ export const useUiStore = create<UiState>((set) => ({
   lowLagSmoothing: DEFAULT_LOW_LAG,
   detectEngine: "worker-cpu",
   paceRenderToCamera: DEFAULT_PACE,
+  favouriteFrameIds: [],
+  showFavourites: false,
   trackerStats: null,
   setStaffMode: (on) => {
     persistFlag(STAFF_KEY, on);
@@ -127,6 +139,21 @@ export const useUiStore = create<UiState>((set) => ({
     setFrameSyncMode(on);
     set({ syncDisplay: on });
   },
+  toggleFavourite: (frameId) =>
+    set((s) => {
+      const has = s.favouriteFrameIds.includes(frameId);
+      const favouriteFrameIds = has
+        ? s.favouriteFrameIds.filter((id) => id !== frameId)
+        : [...s.favouriteFrameIds, frameId];
+      // Nothing left to show: back to all frames.
+      return { favouriteFrameIds, showFavourites: s.showFavourites && favouriteFrameIds.length > 0 };
+    }),
+  addFavourites: (frameIds) =>
+    set((s) => {
+      const add = frameIds.filter((id) => !s.favouriteFrameIds.includes(id));
+      return add.length ? { favouriteFrameIds: [...s.favouriteFrameIds, ...add] } : {};
+    }),
+  setShowFavourites: (on) => set((s) => ({ showFavourites: on && s.favouriteFrameIds.length > 0 })),
   setPredictFromCapture: (on) => {
     saveFlag(PREDICT_KEY, on, DEFAULT_PREDICT_FROM_CAPTURE);
     set({ predictFromCapture: on });
