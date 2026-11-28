@@ -29,6 +29,12 @@ const LOWLAG_KEY = "eyenetra.lowLagSmoothing";
 const DEFAULT_SYNC = true;
 const DEFAULT_PREDICT_FROM_CAPTURE = true;
 const DEFAULT_LOW_LAG = false;
+/**
+ * Draw the 3D view only when there is a new picture to show. Nothing on
+ * screen changes in between, and the spare GPU time lets tracking reach the
+ * camera's 30 fps.
+ */
+const DEFAULT_PACE = true;
 
 /** Saved "1"/"0", or the default when nothing is saved. */
 function readFlag(key: string, fallback: boolean): boolean {
@@ -109,7 +115,7 @@ export const useUiStore = create<UiState>((set) => ({
   predictFromCapture: DEFAULT_PREDICT_FROM_CAPTURE,
   lowLagSmoothing: DEFAULT_LOW_LAG,
   detectEngine: "worker-cpu",
-  paceRenderToCamera: false,
+  paceRenderToCamera: DEFAULT_PACE,
   trackerStats: null,
   setStaffMode: (on) => {
     persistFlag(STAFF_KEY, on);
@@ -139,7 +145,7 @@ export const useUiStore = create<UiState>((set) => ({
     set({ detectEngine: engine });
   },
   setPaceRenderToCamera: (on) => {
-    persistFlag(PACE_KEY, on);
+    saveFlag(PACE_KEY, on, DEFAULT_PACE);
     set({ paceRenderToCamera: on });
   },
   setTrackerStats: (stats) => set({ trackerStats: stats }),
@@ -160,7 +166,7 @@ export function hydrateUiStore(): void {
     });
     const engine = localStorage.getItem(ENGINE_KEY) as DetectEngine | null;
     if (engine && ENGINES.includes(engine)) useUiStore.setState({ detectEngine: engine });
-    if (localStorage.getItem(PACE_KEY) === "1") useUiStore.setState({ paceRenderToCamera: true });
+    useUiStore.setState({ paceRenderToCamera: readFlag(PACE_KEY, DEFAULT_PACE) });
   } catch {
     // storage blocked
   }
