@@ -14,6 +14,8 @@
  * never drift apart, but the picture only updates as fast as the tracker:
  * on a slow machine the whole mirror looks like a low-fps camera.
  */
+import { devCount } from "@/lib/devMetrics";
+
 let displayCanvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
 let painted = false;
@@ -31,9 +33,40 @@ export function setFrameSyncCanvas(canvas: HTMLCanvasElement | null): void {
   painted = false;
 }
 
+type VideoWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback: (cb: (now: number) => void) => number;
+  cancelVideoFrameCallback: (handle: number) => void;
+};
+let liveFrameHandle: number | null = null;
+/** performance.now() when the <video> last got a new camera frame (LIVE). */
+let liveFrameAtMs: number | null = null;
+
 /** The camera <video> (registered by WebcamFeed) — the LIVE background source. */
 export function setLiveVideo(video: HTMLVideoElement | null): void {
+  const prev = liveVideo as VideoWithFrameCallback | null;
+  if (prev && liveFrameHandle != null && typeof prev.cancelVideoFrameCallback === "function") {
+    prev.cancelVideoFrameCallback(liveFrameHandle);
+  }
+  liveFrameHandle = null;
+  liveFrameAtMs = null;
   liveVideo = video;
+  const v = video as VideoWithFrameCallback | null;
+  if (!v || typeof v.requestVideoFrameCallback !== "function") return;
+  const tick = (now: number) => {
+    if (liveVideo !== v) return;
+    liveFrameAtMs = now;
+    liveFrameHandle = v.requestVideoFrameCallback(tick);
+  };
+  liveFrameHandle = v.requestVideoFrameCallback(tick);
+}
+
+/**
+ * When the picture LIVE mode is showing arrived — on the same clock as
+ * TrackingFrame.frameAtMs, so the difference is how far the glasses' pose
+ * trails the picture ("predict from capture time").
+ */
+export function getLiveFrameAtMs(): number | null {
+  return liveFrameAtMs;
 }
 
 export function getLiveVideo(): HTMLVideoElement | null {
@@ -45,6 +78,7 @@ export function setFrameSyncMode(on: boolean): void {
   if (syncMode === on) return;
   syncMode = on;
   painted = false;
+  dropSyncFrame();
   if (!on && displayCanvas && ctx) {
     // Leave no stale analysed frame on the DOM canvas.
     ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
@@ -55,23 +89,81 @@ export function frameSyncMode(): boolean {
   return syncMode;
 }
 
-/** True once the display canvas is actually showing tracked frames (SYNC). */
+/** True once tracked frames are actually being shown (SYNC). */
 export function frameSyncActive(): boolean {
-  return syncMode && displayCanvas != null && ctx != null && painted;
+  return syncMode && painted && (syncFrame != null || (displayCanvas != null && ctx != null));
 }
 
-/** SYNC: copy the current video frame into the display canvas (same frame the detector sees). */
-export function presentFrame(video: HTMLVideoElement): void {
+const presentListeners = new Set<() => void>();
+/**
+ * SYNC frame handed over by the worker tracker, shown by the 3D background as
+ * a texture straight from the VideoFrame (no 2D-canvas copy). Owned here:
+ * closed when the next one arrives or SYNC turns off.
+ */
+let syncFrame: VideoFrame | null = null;
+
+function dropSyncFrame() {
+  syncFrame?.close();
+  syncFrame = null;
+}
+
+function announce() {
+  devCount("shown");
+  painted = true;
+  frameSeq++;
+  for (const cb of presentListeners) cb();
+}
+
+/**
+ * SYNC: copy a camera frame into the display canvas — the very frame the
+ * detector analysed. The main-thread tracker passes the <video> just before
+ * detecting on it; the worker's bitmap path passes its full-size copy (the
+ * caller closes that afterwards).
+ */
+export function presentFrame(source: CanvasImageSource, w: number, h: number): void {
   if (!syncMode || !displayCanvas || !ctx) return;
-  const w = video.videoWidth, h = video.videoHeight;
   if (!w || !h) return;
+  dropSyncFrame();
+  drawToCanvas(source, w, h);
+  announce();
+}
+
+/**
+ * SYNC, worker stream path: show this analysed VideoFrame. Takes ownership —
+ * the caller must not close it. The 3D background uploads it directly; the
+ * DOM canvas gets a copy only while the 3D background isn't running.
+ */
+export function presentVideoFrame(frame: VideoFrame): void {
+  if (!syncMode) {
+    frame.close();
+    return;
+  }
+  dropSyncFrame();
+  syncFrame = frame;
+  if (!glBackground) drawToCanvas(frame, frame.displayWidth, frame.displayHeight);
+  announce();
+}
+
+function drawToCanvas(source: CanvasImageSource, w: number, h: number) {
+  if (!displayCanvas || !ctx || !w || !h) return;
   if (displayCanvas.width !== w || displayCanvas.height !== h) {
     displayCanvas.width = w;
     displayCanvas.height = h;
   }
-  ctx.drawImage(video, 0, 0, w, h);
-  painted = true;
-  frameSeq++;
+  ctx.drawImage(source, 0, 0, w, h);
+}
+
+/** The worker's current SYNC VideoFrame (3D background texture source), if any. */
+export function getSyncVideoFrame(): VideoFrame | null {
+  return syncMode && painted ? syncFrame : null;
+}
+
+/** Called right after each SYNC frame is painted (the paced 3D loop draws then). */
+export function onFramePresented(cb: () => void): () => void {
+  presentListeners.add(cb);
+  return () => {
+    presentListeners.delete(cb);
+  };
 }
 
 export function getFrameSyncCanvas(): HTMLCanvasElement | null {

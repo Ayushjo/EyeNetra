@@ -23,6 +23,53 @@ import { useFitEngine } from "@/hooks/useFitEngine";
 import { useTryOnStore } from "@/store/tryOnStore";
 import { FRAMES, getFrameById } from "@/data/frames";
 import { SHOP_HDRI } from "@/lib/hdri";
+import { frameSyncActive, getLiveVideo, onFramePresented } from "@/tracking/frameSync";
+import { useUiStore } from "@/store/uiStore";
+
+/**
+ * Staff option "pace 3D to camera": draw once per new camera frame (with the
+ * video locked to the tracker: once per analysed frame shown) instead of on
+ * every display refresh. The picture only changes at the camera's rate, so
+ * the extra redraws mostly cost GPU time the face tracker could use — on the
+ * test laptop (integrated GPU, 120 Hz screen) this let the worker tracker
+ * reach the camera's 30 fps.
+ */
+function CameraPacedLoop() {
+  const advance = useThree((s) => s.advance);
+  useEffect(() => {
+    let cancelled = false;
+    let handle = 0;
+    let video: (HTMLVideoElement & {
+      requestVideoFrameCallback: (cb: (now: number) => void) => number;
+      cancelVideoFrameCallback: (h: number) => void;
+    }) | null = null;
+    // Locked video: draw when the tracker shows a new analysed frame (its
+    // pose is already published).
+    const offPresent = onFramePresented(() => {
+      if (!cancelled) advance(performance.now());
+    });
+    // Live video (or locked but nothing shown yet): draw per camera frame.
+    const tick = (now: number) => {
+      if (cancelled || !video) return;
+      if (!frameSyncActive()) advance(now);
+      handle = video.requestVideoFrameCallback(tick);
+    };
+    const wait = setInterval(() => {
+      const v = getLiveVideo() as typeof video;
+      if (!v || v === video) return;
+      video = v;
+      handle = video.requestVideoFrameCallback(tick);
+      clearInterval(wait);
+    }, 100);
+    return () => {
+      cancelled = true;
+      offPresent();
+      clearInterval(wait);
+      if (video) video.cancelVideoFrameCallback(handle);
+    };
+  }, [advance]);
+  return null;
+}
 
 /**
  * Option (b): parent anchor receives matrix pose each frame; glasses mesh is a
@@ -262,6 +309,7 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
   const [canvasKey, setCanvasKey] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const dpr = useRenderDpr(boxRef);
+  const paceToCamera = useUiStore((s) => s.paceRenderToCamera);
   useEffect(() => {
     preloadCatalogueModels(FRAMES.map((f) => f.glbPath));
   }, []);
@@ -270,6 +318,7 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
       <Canvas
         key={canvasKey}
         dpr={dpr}
+        frameloop={paceToCamera ? "never" : "always"}
         gl={{
           antialias: true,
           alpha: true,
@@ -298,6 +347,7 @@ export function TryOnCanvas({ className = "" }: { className?: string }) {
         }}
         style={{ background: "transparent", width: "100%", height: "100%" }}
       >
+        {paceToCamera ? <CameraPacedLoop /> : null}
         <Scene />
       </Canvas>
     </div>

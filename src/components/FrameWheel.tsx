@@ -63,15 +63,13 @@ const CENTRE_OUT = 0.22;
 /** Inner (colour) track radius (× disc radius). */
 const INNER = 0.38;
 /**
- * Radial blur: heavy at the rim, light toward the centre. Two stacked
- * backdrop blurs — the light one covers the disc; the heavy one fades in
- * through a radial mask from BLUR_FADE_FROM (clear) to BLUR_FADE_TO (full),
- * as fractions of the drawn radius from the centre.
+ * Frosted glass, baked into two transparent images (scripts/make-wheel-frost.py):
+ * a faint haze over the whole disc, and a milky band fading in toward the
+ * rim. These replaced two live backdrop blurs of the camera picture, which
+ * the GPU had to redo for every video frame and which slowed face tracking.
  */
-const RIM_BLUR_PX = 20;
-const CENTRE_BLUR_PX = 2;
-const BLUR_FADE_FROM = 0.45;
-const BLUR_FADE_TO = 0.85;
+const FROST_CENTRE_SRC = "/images/wheel-frost-centre.png";
+const FROST_RIM_SRC = "/images/wheel-frost-rim.png";
 /** Dark tint: alpha at the centre and at the rim. */
 const TINT_CENTRE = 0.6;
 const TINT_RIM = 0.38;
@@ -745,15 +743,12 @@ export function FrameWheel() {
       {size.W > 0 ? (
         <>
           {/* Dark frosted-glass disc: one consistent surface for the frames,
-              whatever is behind the customer. Radial blur (heavy at the rim,
-              light toward the centre) and a radial tint; a fine edge, a faint
-              inner track for the colours. The disc is the drag surface — the
+              whatever is behind the customer. Frosted-glass images (light
+              haze in the middle, milky toward the rim) under a radial tint;
+              a fine edge, a faint inner track for the colours. The disc is the drag surface — the
               panel around it lets clicks through to the controls below.
               Gradients use "closest-side" so 100 % is the rim (plain
               "circle" measures to the corner, 1.41 × the radius). */}
-          {/* The blur layers are SIBLINGS inside a plain container: an element
-              with a backdrop-filter becomes the backdrop for its children, so
-              a blur nested in a blurred parent only blurs that (empty) parent. */}
           <div
             ref={discRef}
             className="pointer-events-auto absolute rounded-full"
@@ -765,22 +760,14 @@ export function FrameWheel() {
               boxShadow: "0 12px 48px rgba(0,0,0,0.35)",
             }}
           >
-            <div
-              className="pointer-events-none absolute inset-0 rounded-full"
-              style={{
-                backdropFilter: `blur(${CENTRE_BLUR_PX}px) saturate(1.1)`,
-                WebkitBackdropFilter: `blur(${CENTRE_BLUR_PX}px) saturate(1.1)`,
-              }}
-            />
-            <div
-              className="pointer-events-none absolute inset-0 rounded-full"
-              style={{
-                backdropFilter: `blur(${RIM_BLUR_PX}px)`,
-                WebkitBackdropFilter: `blur(${RIM_BLUR_PX}px)`,
-                maskImage: `radial-gradient(circle closest-side, transparent ${BLUR_FADE_FROM * 100}%, black ${BLUR_FADE_TO * 100}%)`,
-                WebkitMaskImage: `radial-gradient(circle closest-side, transparent ${BLUR_FADE_FROM * 100}%, black ${BLUR_FADE_TO * 100}%)`,
-              }}
-            />
+            {[FROST_CENTRE_SRC, FROST_RIM_SRC].map((src) => (
+              <div
+                key={src}
+                className="pointer-events-none absolute inset-0 rounded-full"
+                style={{ backgroundImage: `url(${src})`, backgroundSize: "100% 100%" }}
+                aria-hidden
+              />
+            ))}
             <div
               className="pointer-events-none absolute inset-0 rounded-full border border-white/15"
               style={{

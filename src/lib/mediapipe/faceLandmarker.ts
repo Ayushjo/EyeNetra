@@ -1,6 +1,7 @@
 import {
   FaceLandmarker,
   FilesetResolver,
+  type FaceLandmarkerOptions,
   type FaceLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import { FACE_LANDMARKER_MODEL_URL, WASM_BASE_PATH } from "./constants";
@@ -15,7 +16,8 @@ let landmarkerPromise: Promise<FaceLandmarker> | null = null;
 // filter away, so the dev overlay kept reporting a false "issue".)
 const MEDIAPIPE_NOISE = /Created TensorFlow Lite|XNNPACK|^INFO:|^W0000|inference_feedback_manager/;
 let consoleFiltered = false;
-function filterMediapipeConsoleNoise() {
+/** Also installed by the detection worker (tracking/detect.worker.ts). */
+export function filterMediapipeConsoleNoise() {
   if (consoleFiltered || typeof console === "undefined") return;
   consoleFiltered = true;
   for (const level of ["error", "warn"] as const) {
@@ -27,6 +29,23 @@ function filterMediapipeConsoleNoise() {
   }
 }
 if (typeof window !== "undefined") filterMediapipeConsoleNoise();
+
+/**
+ * Detector settings shared by the main-thread tracker and the worker, so both
+ * produce identical landmarks. The model is the same either way.
+ */
+export function faceLandmarkerOptions(delegate: "CPU" | "GPU"): FaceLandmarkerOptions {
+  return {
+    baseOptions: { modelAssetPath: FACE_LANDMARKER_MODEL_URL, delegate },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+    minFaceDetectionConfidence: 0.5,
+    minFacePresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  };
+}
 
 /**
  * Lazily create a singleton FaceLandmarker in VIDEO mode.
@@ -41,20 +60,8 @@ export function getFaceLandmarker(): Promise<FaceLandmarker> {
     filterMediapipeConsoleNoise();
     landmarkerPromise = (async () => {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE_PATH);
-      return FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: FACE_LANDMARKER_MODEL_URL,
-          // CPU avoids fighting R3F for the WebGL context (context-lost bugs).
-          delegate: "CPU",
-        },
-        runningMode: "VIDEO",
-        numFaces: 1,
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: true,
-        minFaceDetectionConfidence: 0.5,
-        minFacePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      // CPU avoids fighting R3F for the WebGL context (context-lost bugs).
+      return FaceLandmarker.createFromOptions(vision, faceLandmarkerOptions("CPU"));
     })().catch((err) => {
       landmarkerPromise = null;
       throw err;

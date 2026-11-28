@@ -5,8 +5,10 @@ import { useRef } from "react";
 import { Quaternion, Vector3, type Object3D } from "three";
 import { computePose } from "@/lib/fitPose";
 import { OneEuroQuat, OneEuroScalar, OneEuroVec } from "@/lib/oneEuro";
-import { predictPose, PREDICT_MAX_MS } from "@/lib/posePredict";
-import { frameSyncActive } from "@/tracking/frameSync";
+import { predictPose, PREDICT_CAPTURE_MAX_MS, PREDICT_MAX_MS } from "@/lib/posePredict";
+import { useUiStore } from "@/store/uiStore";
+import { devCount, devSample } from "@/lib/devMetrics";
+import { frameSyncActive, getLiveFrameAtMs } from "@/tracking/frameSync";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export type { FitPose } from "@/lib/fitPose";
@@ -59,6 +61,9 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
   const loggedApply = useRef(false);
   const loggedPoseNull = useRef(false);
   const FACE_LOSS_GRACE_MS = 400;
+  /** Filter responsiveness used by the low-lag smoothing option (0.05–1). */
+  const LOW_LAG_RESP = 0.85;
+  const lastDrawAtMs = useRef(0);
 
   const liveScaleWindow = useRef<number[]>([]);
   const calibScaleWindow = useRef<number[]>([]);
@@ -223,7 +228,11 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
 
     // smoothingFactor slider (0.05..1) modulates one-euro responsiveness:
     // higher = snappier (tracks fast motion), lower = glassier (max de-jitter).
-    const resp = Math.min(1, Math.max(0.05, smoothingFactor));
+    const ui = useUiStore.getState();
+    const slider = Math.min(1, Math.max(0.05, smoothingFactor));
+    // Low-lag smoothing (staff option, unlocked video only): filter as if the
+    // slider were near "snappy" — less trailing, a little more jitter at rest.
+    const resp = ui.lowLagSmoothing ? Math.max(slider, LOW_LAG_RESP) : slider;
     // Filter on the VIDEO timestamp when the provider supplies it — filtering
     // with render time re-ingests the same 30 fps sample at 60 fps, biasing
     // the derivative toward 0 (hidden lag).
@@ -299,10 +308,21 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
     // Scaled down as the smoothing slider goes glassy.
     // Frame-synchronous display shows the analysed frame itself, so
     // extrapolating past it would put the glasses ahead of the face.
+    let appliedPredictMs = 0;
     if (rawT0.current > 0 && !frameSyncActive()) {
-      const predictMs =
-        Math.min(PREDICT_MAX_MS, Math.max(0, nowMs - lastDetectedAt.current)) *
-        resp;
+      // Predict from capture time (staff option, default on): extrapolate by
+      // how far the pose's camera frame trails the frame on screen —
+      // detection + hand-off + waiting. The old horizon counted only the time
+      // since detection finished, scaled by the slider (≈ 12 ms of a ≈ 50 ms
+      // gap), so the glasses visibly trailed fast head movement.
+      const frameAt = trackingFrame?.frameAtMs;
+      const shownAt = getLiveFrameAtMs() ?? nowMs;
+      const fromCapture = ui.predictFromCapture && frameAt != null;
+      const predictMs = fromCapture
+        ? Math.max(0, shownAt - frameAt)
+        : Math.min(PREDICT_MAX_MS, Math.max(0, nowMs - lastDetectedAt.current)) * resp;
+      const maxMs = fromCapture ? PREDICT_CAPTURE_MAX_MS : PREDICT_MAX_MS;
+      appliedPredictMs = Math.min(predictMs, maxMs);
       predictPose(
         rawPos0.current,
         rawQuat0.current,
@@ -313,9 +333,35 @@ export function useFitEngine(targetRef: React.RefObject<Object3D | null>) {
         predictMs,
         target.position,
         target.quaternion,
+        maxMs,
       );
     }
     target.scale.setScalar(smoothScale.current);
+
+    // ---- Dev timing (DevFpsReadout; no-ops in production) -----------------
+    devCount("draw");
+    if (lastDrawAtMs.current) devSample("drawGap", nowMs - lastDrawAtMs.current);
+    lastDrawAtMs.current = nowMs;
+    const poseFrameAt = trackingFrame?.frameAtMs;
+    if (poseFrameAt != null) {
+      // First draw with a new pose: how long it waited after reaching the page.
+      if (isNewSample && trackingFrame?.receivedAtMs != null) {
+        devSample("toDraw", nowMs - trackingFrame.receivedAtMs);
+        devSample("firstAge", nowMs - poseFrameAt);
+      }
+      // Camera frame → glasses on screen (this draw).
+      devSample("poseAge", nowMs - poseFrameAt);
+      const liveShownAt = frameSyncActive() ? null : getLiveFrameAtMs();
+      if (liveShownAt != null) {
+        // Live picture: the pose's frame trails the frame on screen by
+        // `behind`; prediction covers part of it, `residual` is what's left.
+        const behind = liveShownAt - poseFrameAt;
+        devSample("picAge", nowMs - liveShownAt);
+        devSample("behind", behind);
+        devSample("predicted", appliedPredictMs);
+        devSample("residual", behind - appliedPredictMs);
+      }
+    }
 
     if (providerKey === "mediapipe") {
       useTryOnStore.getState().setLastMediapipeScale(smoothScale.current);

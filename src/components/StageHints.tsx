@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { DevFpsReadout } from "@/components/DevFpsReadout";
 import { useFraming, type FramingState } from "@/hooks/useFraming";
 import { useTryOnStore } from "@/store/tryOnStore";
 import { useUiStore } from "@/store/uiStore";
@@ -97,6 +98,7 @@ export function BrandMark() {
           Staff
         </span>
       ) : null}
+      <DevFpsReadout />
     </div>
   );
 }

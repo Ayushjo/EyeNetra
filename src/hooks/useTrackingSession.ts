@@ -2,13 +2,19 @@
 
 import { useEffect, useRef } from "react";
 import { MediaPipeProvider } from "@/tracking/MediaPipeProvider";
+import { WorkerMediaPipeProvider } from "@/tracking/WorkerMediaPipeProvider";
 import { JeelizProvider } from "@/tracking/JeelizProvider";
-import type { TrackingProvider } from "@/tracking/types";
+import type { TrackingFrame, TrackingProvider } from "@/tracking/types";
 import { useTryOnStore } from "@/store/tryOnStore";
+import { useUiStore } from "@/store/uiStore";
 
 /**
  * Starts exactly one TrackingProvider. On provider id change: stop old fully,
  * then start new — never run MediaPipe + Jeeliz together.
+ *
+ * MediaPipe runs in a Web Worker unless staff chose the main thread or the
+ * worker can't start — then it falls back to the main-thread tracker. Both
+ * follow "lock video to tracker" live, without a restart.
  */
 export function useTrackingSession(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -19,6 +25,8 @@ export function useTrackingSession(
   const setTrackingStatus = useTryOnStore((s) => s.setTrackingStatus);
   const setFps = useTryOnStore((s) => s.setFps);
   const setTrackingFrame = useTryOnStore((s) => s.setTrackingFrame);
+  const setTrackerStats = useUiStore((s) => s.setTrackerStats);
+  const engine = useUiStore((s) => s.detectEngine);
   const providerRef = useRef<TrackingProvider | null>(null);
   const publishRaf = useRef<number | null>(null);
 
@@ -52,7 +60,42 @@ export function useTrackingSession(
         onFps: (fps: number) => {
           if (!cancelled) setFps(fps);
         },
+        onStats: (stats: Parameters<typeof setTrackerStats>[0]) => {
+          if (!cancelled) setTrackerStats(stats);
+        },
+        // Publish at once rather than on the next animation frame, so a
+        // locked (SYNC) frame and its pose always reach the same draw.
+        onFrame: (frame: TrackingFrame) => {
+          if (cancelled) return;
+          setTrackingFrame(frame);
+          lastPublished = frame;
+        },
       };
+      setTrackerStats(null);
+
+      const useWorker =
+        providerId !== "jeeliz" && engine !== "main" && WorkerMediaPipeProvider.supported();
+      if (useWorker) {
+        const workerProvider = new WorkerMediaPipeProvider(
+          engine === "worker-gpu" ? "GPU" : "CPU",
+          opts,
+        );
+        providerRef.current = workerProvider;
+        try {
+          await workerProvider.start(video);
+          if (cancelled) {
+            workerProvider.stop();
+            return;
+          }
+          publish();
+          return;
+        } catch (err) {
+          workerProvider.stop();
+          providerRef.current = null;
+          if (cancelled) return;
+          console.warn("[EyeNetra:tracking] worker tracker failed — using the main thread", err);
+        }
+      }
 
       const provider: TrackingProvider =
         providerId === "jeeliz"
@@ -101,9 +144,11 @@ export function useTrackingSession(
   }, [
     enabled,
     providerId,
+    engine,
     videoRef,
     setTrackingStatus,
     setFps,
     setTrackingFrame,
+    setTrackerStats,
   ]);
 }

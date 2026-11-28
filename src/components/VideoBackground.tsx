@@ -10,6 +10,7 @@ import {
   PerspectiveCamera,
   PlaneGeometry,
   SRGBColorSpace,
+  VideoFrameTexture,
   VideoTexture,
   type Texture,
 } from "three";
@@ -17,6 +18,7 @@ import {
   frameSyncMode,
   getFrameSeq,
   getFrameSyncCanvas,
+  getSyncVideoFrame,
   getLiveVideo,
   setGlBackgroundActive,
 } from "@/tracking/frameSync";
@@ -55,6 +57,7 @@ export function VideoBackground() {
   const camera = useThree((s) => s.camera);
   const meshRef = useRef<Mesh>(null);
   const canvasTexRef = useRef<CanvasTexture | null>(null);
+  const frameTexRef = useRef<VideoFrameTexture | null>(null);
   const videoTexRef = useRef<VideoTexture | null>(null);
   const lastUploadMs = useRef(0);
   const lastSeq = useRef(-1);
@@ -69,6 +72,7 @@ export function VideoBackground() {
       setGlBackgroundActive(false);
       canvasTexRef.current?.dispose();
       videoTexRef.current?.dispose();
+      frameTexRef.current?.dispose();
       material.dispose();
       geometry.dispose();
     },
@@ -84,8 +88,19 @@ export function VideoBackground() {
 
     let map: Texture | null = null;
     if (frameSyncMode()) {
-      const canvas = getFrameSyncCanvas();
-      if (canvas) {
+      const frame = getSyncVideoFrame();
+      const canvas = frame ? null : getFrameSyncCanvas();
+      if (frame) {
+        // Worker tracker: the analysed VideoFrame itself, uploaded straight to
+        // the GPU (no copy through the 2D display canvas).
+        if (!frameTexRef.current) frameTexRef.current = prepare(new VideoFrameTexture());
+        const seq = getFrameSeq();
+        if (seq !== lastSeq.current || frameTexRef.current.image !== frame) {
+          lastSeq.current = seq;
+          frameTexRef.current.setFrame(frame);
+        }
+        map = frameTexRef.current;
+      } else if (canvas) {
         if (!canvasTexRef.current || canvasTexRef.current.image !== canvas) {
           canvasTexRef.current?.dispose();
           canvasTexRef.current = prepare(new CanvasTexture(canvas));
