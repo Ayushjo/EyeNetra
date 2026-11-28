@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { useFaceCalibration } from "@/hooks/useFaceCalibration";
 import { useFraming } from "@/hooks/useFraming";
-import { clearFaceProfile, loadFaceProfile } from "@/lib/faceProfile";
-import { canonicalHeadAnchors, clearHeadAnchors, loadHeadAnchors } from "@/lib/headAnchors";
-import {
-  CAMERA_CALIB_STORAGE_KEY,
-  loadCameraCalib,
-} from "@/lib/cameraCalib";
+import { clearFaceProfile } from "@/lib/faceProfile";
+import { canonicalHeadAnchors, clearHeadAnchors } from "@/lib/headAnchors";
+import { CAMERA_CALIB_STORAGE_KEY } from "@/lib/cameraCalib";
 import { useTryOnStore } from "@/store/tryOnStore";
 
 export function FitCalibration() {
@@ -24,31 +20,8 @@ export function FitCalibration() {
   const framing = useFraming(isMediapipe && !isCapturing);
   // Only scan when the user is well-framed (like setting up Face ID).
   const canCalibrate = hasFace && isMediapipe && framing.ok;
-  const hydrated = useRef(false);
-
-  // Hydrate once from localStorage — do NOT re-run when faceProfile flips
-  // (that previously fought Clear / HMR and looked like silent re-calibration).
-  useEffect(() => {
-    if (hydrated.current) return;
-    hydrated.current = true;
-    if (useTryOnStore.getState().faceProfile) return;
-    const stored = loadFaceProfile();
-    if (stored) {
-      console.info("[EyeNetra:calib:write] hydrate from localStorage", {
-        ipdMm: stored.ipdMm,
-        faceWidthMm: stored.faceWidthMm,
-        refEyeSpanScene: stored.refEyeSpanScene,
-      });
-      setFaceProfile(stored);
-      const anchors = loadHeadAnchors();
-      if (anchors) useTryOnStore.getState().setHeadAnchors(anchors);
-    }
-    const calib = loadCameraCalib();
-    if (calib) {
-      useTryOnStore.getState().setCameraCalib(calib);
-      console.info("[EyeNetra:calib:write] hydrate cameraCalib", calib);
-    }
-  }, [setFaceProfile]);
+  // The saved fit size is loaded by the stage (useFitProfileHydration), so
+  // it applies even when this staff panel is not shown.
 
   const onClear = () => {
     clearFaceProfile();

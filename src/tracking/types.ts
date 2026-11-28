@@ -40,9 +40,26 @@ export type TrackingFrame = {
   timestampMs?: number;
   /** performance.now() when the detection finished — prediction offset base. */
   detectedAtMs?: number;
+  /**
+   * performance.now() when the analysed camera frame became available —
+   * how old the pose really is ("predict from capture time").
+   */
+  frameAtMs?: number;
+  /** performance.now() when this page thread got the result (dev timing). */
+  receivedAtMs?: number;
 };
 
 export type TrackingProviderId = "mediapipe" | "jeeliz";
+
+/** Where face detection runs (staff option; SYNC display forces "main"). */
+export type DetectEngine = "main" | "worker-cpu" | "worker-gpu";
+
+/** Once a second from the active tracker — staff panel readout. */
+export type TrackerStats = {
+  engine: DetectEngine;
+  /** Mean time inside detectForVideo over the last second (ms). */
+  detectMs: number | null;
+};
 
 export interface TrackingProvider {
   readonly id: TrackingProviderId;

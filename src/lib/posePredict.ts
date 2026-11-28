@@ -4,6 +4,12 @@ import { Quaternion, Vector3 } from "three";
 export const PREDICT_MAX_STEP_RAD = (4 * Math.PI) / 180;
 /** Max extrapolation horizon (ms) — about one 30 fps detection interval. */
 export const PREDICT_MAX_MS = 34;
+/**
+ * Cap for "predict from capture time": the analysed frame's real age vs the
+ * frame on screen (detection + hand-off + up to a frame of waiting), ~2–3
+ * camera frames. Past this, extrapolation does more harm than lag.
+ */
+export const PREDICT_CAPTURE_MAX_MS = 100;
 
 const _dq = new Quaternion();
 const _axis = new Vector3();
@@ -24,10 +30,11 @@ export function predictPose(
   predictMs: number,
   outPos: Vector3,
   outQuat: Quaternion,
+  maxMs: number = PREDICT_MAX_MS,
 ): void {
   const dtMs = t1Ms - t0Ms;
   if (!(dtMs > 1) || !(predictMs > 0)) return;
-  const s = Math.min(predictMs, PREDICT_MAX_MS) / dtMs;
+  const s = Math.min(predictMs, maxMs) / dtMs;
 
   // Linear velocity.
   outPos.x += (p1.x - p0.x) * s;

@@ -2,11 +2,14 @@
 
 import { useEffect } from "react";
 import { VoiceStageOverlay } from "@/components/voice/VoiceStageOverlay";
-import { useVoiceStore, voiceLevels, type VoicePhase } from "@/store/voiceStore";
+import { FrameWheel } from "@/components/FrameWheel";
+import { useVoiceStore, voiceLevels, type ConversationStage, type VoicePhase } from "@/store/voiceStore";
+import { useUiStore } from "@/store/uiStore";
 
 /**
  * Dev preview of the voice overlay without camera or bot: buttons drive the
- * phases, a fake level oscillator stands in for the audio meters.
+ * phases, a fake level oscillator stands in for the audio meters. ?mode=text
+ * previews typing; there, send() echoes the line and fakes a short reply.
  */
 const DEMO = [
   { sku: "EN-1001", name: "Classic Aviator", brand: "Vincent Chase", price: 1200, shape: "aviator", frameId: "aviator", variantId: "aviator-black" },
@@ -27,11 +30,31 @@ export default function DevVoice() {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+    let lineId = 100;
     useVoiceStore.setState({
       connect: () => useVoiceStore.setState({ phase: "listening", status: "connected" }),
       disconnect: () => useVoiceStore.setState({ phase: "off", status: "idle" }),
+      send: (text: string) => {
+        useVoiceStore.setState((s) => ({
+          status: "connected",
+          phase: "thinking",
+          botCaption: "",
+          transcript: [...s.transcript, { id: ++lineId, role: "user", text }],
+        }));
+        setTimeout(() => {
+          const reply = "ठीक है जी, देखिए — यह रहा अगला फ्रेम। पसंद आया, या अगला दिखाऊँ?";
+          useVoiceStore.setState((s) => ({
+            phase: "speaking",
+            botCaption: reply,
+            transcript: [...s.transcript, { id: ++lineId, role: "bot", text: reply }],
+          }));
+          setTimeout(() => useVoiceStore.setState({ phase: "listening" }), 1200);
+        }, 1400);
+      },
     });
     const params = new URLSearchParams(window.location.search);
+    const mode = params.get("mode");
+    if (mode === "text" || mode === "voice") useUiStore.getState().setInputMode(mode);
     const p = params.get("phase") as VoicePhase | null;
     if (p) useVoiceStore.setState({ phase: p, status: p === "off" ? "idle" : "connected" });
     if (params.has("scene")) {
@@ -71,6 +94,7 @@ export default function DevVoice() {
   };
 
   const btn = "rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50";
+  const stages: ConversationStage[] = ["greet", "prefs", "show", "liked", "lead", "end_of_list"];
 
   return (
     <main className="min-h-screen bg-zinc-50 p-6">
@@ -106,9 +130,34 @@ export default function DevVoice() {
         >
           like
         </button>
+        <button
+          onClick={() =>
+            useVoiceStore.setState({
+              phase: "error",
+              status: "error",
+              errorMessage: "Sarvam: insufficient credits (402)",
+            })
+          }
+          className={btn}
+        >
+          error (credits)
+        </button>
+        <span className="mx-1 h-4 w-px bg-zinc-300" aria-hidden />
+        <button onClick={() => useUiStore.getState().setInputMode("voice")} className={btn}>
+          mode: voice
+        </button>
+        <button onClick={() => useUiStore.getState().setInputMode("text")} className={btn}>
+          mode: text
+        </button>
+        {stages.map((st) => (
+          <button key={st} onClick={() => useVoiceStore.setState({ stage: st, status: "connected" })} className={btn}>
+            stage {st}
+          </button>
+        ))}
       </div>
       <div className="relative mx-auto aspect-[4/3] w-full max-w-4xl overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-500 to-zinc-700 ring-1 ring-zinc-200">
         <VoiceStageOverlay />
+        <FrameWheel />
       </div>
     </main>
   );

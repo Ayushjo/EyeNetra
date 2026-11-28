@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type RefObject } from "react";
-import { setFrameSyncCanvas } from "@/tracking/frameSync";
+import { setFrameSyncCanvas, setLiveVideo } from "@/tracking/frameSync";
 
 interface WebcamFeedProps {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -13,15 +13,21 @@ interface WebcamFeedProps {
  * video aspect ratio so landmark UVs map 1:1 — object-cover crops and breaks fit.
  */
 export function WebcamFeed({ videoRef, className = "" }: WebcamFeedProps) {
-  // Frame-synchronous display: the visible picture is a canvas that the
-  // tracker paints with the exact frame it analysed (tracking/frameSync.ts).
-  // The <video> keeps playing underneath as the source; the canvas covers it
-  // once painted, and an unpainted (transparent) canvas falls back to it.
+  // The 3D renderer normally draws this <video> as its background (LIVE).
+  // In frame-synchronous mode (staff option) the visible picture is instead
+  // a canvas the tracker paints with the exact frame it analysed
+  // (tracking/frameSync.ts); an unpainted (transparent) canvas falls back to
+  // the video. The <video> stays visible underneath either way, so its
+  // requestVideoFrameCallback (which drives the tracker) keeps firing.
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     setFrameSyncCanvas(canvasRef.current);
-    return () => setFrameSyncCanvas(null);
-  }, []);
+    setLiveVideo(videoRef.current);
+    return () => {
+      setFrameSyncCanvas(null);
+      setLiveVideo(null);
+    };
+  }, [videoRef]);
   return (
     // The caller positions this box (TryOnStage passes "absolute inset-0").
     // Do not add "relative" here: Tailwind orders relative after absolute, so

@@ -28,7 +28,7 @@ import {
 } from "@/lib/headAnchors";
 import { useTryOnStore } from "@/store/tryOnStore";
 
-function isLensName(name: string): boolean {
+export function isLensName(name: string): boolean {
   const n = name.toLowerCase();
   return (
     n.includes("lens") ||
@@ -38,7 +38,7 @@ function isLensName(name: string): boolean {
   );
 }
 
-function applyVariant(
+export function applyVariant(
   mat: MeshStandardMaterial | MeshPhysicalMaterial,
   lens: boolean,
   variant: FrameVariant,
@@ -176,7 +176,7 @@ function scanGlassesGeom(
  * pointed at the camera. Always pin max.z → 0; if center is still +Z-heavy,
  * Y-rotate 180° once and re-pin.
  */
-function normalizeGlasses(
+export function normalizeGlasses(
   root: Group,
   fit: FrameSku["fit"],
 ): PivotDebug {

@@ -2,20 +2,18 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef } from "react";
-import { FramePicker } from "@/components/FramePicker";
 import { LandmarkOverlay } from "@/components/LandmarkOverlay";
-import { TryOnControls } from "@/components/TryOnControls";
-import {
-  CaptureStudio,
-  freezeCaptureFromStage,
-} from "@/components/CaptureStudio";
+import { CaptureStudio } from "@/components/CaptureStudio";
 import { WebcamFeed } from "@/components/WebcamFeed";
+import { BrandMark, FramingHint } from "@/components/StageHints";
+import { FrameWheel } from "@/components/FrameWheel";
 import { VoiceStageOverlay } from "@/components/voice/VoiceStageOverlay";
 import { useTrackingSession } from "@/hooks/useTrackingSession";
 import { useLightEstimate } from "@/hooks/useLightEstimate";
 import { useAutoFitCalibration } from "@/hooks/useAutoFitCalibration";
 import { useEarTracking } from "@/hooks/useEarTracking";
-import { useWebcam } from "@/hooks/useWebcam";
+import { useFitProfileHydration } from "@/hooks/useFitProfileHydration";
+import { useWebcam, type WebcamStatus } from "@/hooks/useWebcam";
 import { detectCapabilities } from "@/lib/capabilities";
 import { useTryOnStore } from "@/store/tryOnStore";
 
@@ -24,34 +22,81 @@ const TryOnCanvas = dynamic(
   { ssr: false },
 );
 
-function StatusPanel({
-  title,
-  body,
-  actionLabel,
-  onAction,
+const WELCOME: Record<
+  Exclude<WebcamStatus, "ready">,
+  { title: string; body: string; action?: string; actionSub?: string }
+> = {
+  idle: {
+    title: "चश्मा पहनकर देखिए",
+    body: "फ्रेम सीधे आपके चेहरे पर — बोलकर या छूकर चुनिए।",
+    action: "शुरू करें",
+    actionSub: "Start try-on",
+  },
+  requesting: {
+    title: "कैमरे की अनुमति दीजिए",
+    body: "ब्राउज़र के संदेश में Allow चुनिए।",
+  },
+  denied: {
+    title: "कैमरा बंद है",
+    body: "ब्राउज़र की settings में Camera को Allow करें, फिर दोबारा कोशिश करें।",
+    action: "दोबारा कोशिश करें",
+    actionSub: "Try again",
+  },
+  unsupported: {
+    title: "यहाँ कैमरा नहीं खुल सकता",
+    body: "Chrome, Edge या Safari में खोलिए।",
+  },
+  error: {
+    title: "कैमरा नहीं खुला",
+    body: "कैमरा किसी और app में तो नहीं खुला? बंद करके दोबारा कोशिश करें।",
+    action: "दोबारा कोशिश करें",
+    actionSub: "Retry",
+  },
+};
+
+/** Before the camera runs: welcome, permission and camera-problem screens. */
+function WelcomeScreen({
+  status,
+  errorMessage,
+  onStart,
 }: {
-  title: string;
-  body: string;
-  actionLabel?: string;
-  onAction?: () => void;
+  status: Exclude<WebcamStatus, "ready">;
+  errorMessage: string | null;
+  onStart: () => void;
 }) {
+  const w = WELCOME[status];
   return (
-    <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl bg-white px-8 py-10 text-center shadow-lg">
-      <h2 className="text-xl font-semibold tracking-tight text-zinc-900">{title}</h2>
-      <p className="text-sm leading-relaxed text-zinc-500">{body}</p>
-      {actionLabel && onAction ? (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 bg-[radial-gradient(ellipse_at_top,#3f3f46_0%,#18181b_55%,#09090b_100%)] p-6 text-center">
+      <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-6xl">{w.title}</h2>
+      <p className="max-w-md text-base leading-relaxed text-zinc-300 sm:text-lg">{w.body}</p>
+      {status === "requesting" ? (
+        <span className="typing-dot h-2 w-2 rounded-full bg-white/70" aria-hidden />
+      ) : null}
+      {w.action ? (
         <button
           type="button"
-          onClick={onAction}
-          className="mt-2 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-700"
+          onClick={onStart}
+          className="mt-2 flex flex-col items-center rounded-2xl bg-white px-8 py-3 text-zinc-900 shadow-[0_10px_40px_rgba(255,255,255,0.12)] transition hover:bg-zinc-100 active:scale-[0.98]"
         >
-          {actionLabel}
+          <span className="text-lg font-semibold">{w.action}</span>
+          {w.actionSub ? <span className="text-xs text-zinc-500">{w.actionSub}</span> : null}
         </button>
+      ) : null}
+      {status === "idle" ? (
+        <p className="text-xs text-zinc-500">कैमरे का वीडियो इसी डिवाइस पर रहता है · Video stays on this device</p>
+      ) : null}
+      {errorMessage && status !== "idle" ? (
+        <p className="max-w-md text-xs text-zinc-500">{errorMessage}</p>
       ) : null}
     </div>
   );
 }
 
+/**
+ * The mirror: camera, glasses and the assistant overlay, sized to fill the
+ * screen height at the camera's aspect ratio (landmarks ↔ pixels stay 1:1 —
+ * no cover crop). Staff tools and the frame list live below it on the page.
+ */
 export function TryOnStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const { status, errorMessage, videoRef, start } = useWebcam();
@@ -62,16 +107,13 @@ export function TryOnStage() {
   const videoWidth = useTryOnStore((s) => s.videoWidth);
   const videoHeight = useTryOnStore((s) => s.videoHeight);
 
-  const setCapture = useTryOnStore((s) => s.setCapture);
-
   useEffect(() => {
     const caps = detectCapabilities();
     setCapabilities({ webgl2: caps.webgl2, camera: caps.camera });
     setMobilePerfMode(caps.preferMobilePerf);
   }, [setCapabilities, setMobilePerfMode]);
 
-  // Apply ?frame=&variant= deep links — the /voice page navigates here with
-  // these params when the agent pushes a try_on_frame suggestion. Reads
+  // Apply ?frame=&variant= deep links (old /voice links). Reads
   // window.location directly instead of useSearchParams so the page needs
   // no Suspense boundary.
   useEffect(() => {
@@ -85,6 +127,7 @@ export function TryOnStage() {
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
 
+  useFitProfileHydration();
   useTrackingSession(videoRef, status === "ready");
   useLightEstimate(videoRef, status === "ready");
   useAutoFitCalibration(status === "ready");
@@ -96,13 +139,18 @@ export function TryOnStage() {
     videoWidth > 0 && videoHeight > 0 ? videoWidth / videoHeight : 4 / 3;
 
   return (
-    <div className="space-y-4">
+    <>
       <CaptureStudio />
       <div
         id="tryon-stage"
         ref={stageRef}
-        className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-zinc-100 shadow-sm ring-1 ring-zinc-200"
-        style={{ aspectRatio: `${stageAspect}` }}
+        className="relative mx-auto overflow-hidden bg-zinc-900 shadow-2xl ring-1 ring-white/10 sm:rounded-3xl"
+        style={{
+          aspectRatio: `${stageAspect}`,
+          // As large as the screen allows: full width, or full height (less
+          // the page padding) — whichever binds first.
+          width: `min(100%, calc((100svh - 2rem) * ${stageAspect}))`,
+        }}
       >
         {/* Always mounted so getUserMedia can attach before ready UI. */}
         <WebcamFeed
@@ -114,11 +162,14 @@ export function TryOnStage() {
           <>
             <LandmarkOverlay />
             <TryOnCanvas />
+            <FramingHint />
             <VoiceStageOverlay />
+            <FrameWheel />
             {trackingStatus === "loading" ? (
-              <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/40 backdrop-blur-[2px]">
-                <div className="rounded-xl bg-white px-5 py-4 text-sm text-zinc-700 shadow-lg ring-1 ring-zinc-200">
-                  Loading face tracker…
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                <div className="flex items-center gap-3 rounded-full bg-white/90 px-5 py-2.5 text-sm font-medium text-zinc-800 shadow-lg">
+                  <span className="typing-dot h-2 w-2 rounded-full bg-zinc-500" aria-hidden />
+                  चेहरा पहचानने की तैयारी…
                 </div>
               </div>
             ) : null}
@@ -126,74 +177,22 @@ export function TryOnStage() {
         ) : null}
 
         {status !== "ready" ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-50 p-6">
-            {status === "idle" ? (
-              <StatusPanel
-                title="Virtual try-on"
-                body="Allow camera access to try on frames in real time. Video stays on your device."
-                actionLabel="Enable camera"
-                onAction={() => void start()}
-              />
-            ) : null}
-            {status === "requesting" ? (
-              <StatusPanel
-                title="Requesting camera…"
-                body="Check the browser prompt and choose Allow."
-              />
-            ) : null}
-            {status === "denied" ? (
-              <StatusPanel
-                title="Camera blocked"
-                body={
-                  errorMessage ??
-                  "Permission was denied. Update site settings, then try again."
-                }
-                actionLabel="Try again"
-                onAction={() => void start()}
-              />
-            ) : null}
-            {status === "unsupported" ? (
-              <StatusPanel
-                title="Camera not supported"
-                body={
-                  errorMessage ??
-                  "This browser cannot access a webcam. Try Chrome, Safari, or Edge on HTTPS/localhost."
-                }
-              />
-            ) : null}
-            {status === "error" ? (
-              <StatusPanel
-                title="Camera unavailable"
-                body={errorMessage ?? "Could not start the camera."}
-                actionLabel="Retry"
-                onAction={() => void start()}
-              />
-            ) : null}
-          </div>
+          <WelcomeScreen status={status} errorMessage={errorMessage} onStart={() => void start()} />
         ) : null}
 
         {status === "ready" && webglBlocked ? (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-zinc-900/60 p-6">
-            <StatusPanel
-              title="WebGL2 required"
-              body="This try-on needs WebGL2 for 3D frame rendering. Try updating your browser or enabling hardware acceleration."
-            />
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-zinc-950/85 p-6 text-center">
+            <div className="max-w-md space-y-2">
+              <h2 className="text-xl font-semibold text-white">3D के लिए WebGL2 चाहिए</h2>
+              <p className="text-sm text-zinc-400">
+                This try-on needs WebGL2. Update the browser or turn on hardware acceleration.
+              </p>
+            </div>
           </div>
         ) : null}
-      </div>
 
-      {status === "ready" && !webglBlocked ? (
-        <>
-          <TryOnControls
-            onCapture={() => {
-              if (!stageRef.current) return;
-              const snap = freezeCaptureFromStage(stageRef.current);
-              if (snap) setCapture(snap);
-            }}
-          />
-          <FramePicker />
-        </>
-      ) : null}
-    </div>
+        <BrandMark />
+      </div>
+    </>
   );
 }

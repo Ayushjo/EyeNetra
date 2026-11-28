@@ -23,14 +23,20 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     Frame,
+    InterruptionFrame,
+    LLMAssistantPushAggregationFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    TTSTextFrame,
     UserStoppedSpeakingFrame,
 )
+from pipecat.utils.text.base_text_aggregator import TextType
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.pipeline.pipeline import Pipeline
@@ -401,6 +407,104 @@ class ThinkingFiller(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class CaptionOnlyTTS(FrameProcessor):
+    """Text mode's stand-in for TTS: no audio — the bot's words reach the
+    page as captions.
+
+    Used when the customer types instead of talking (no Sarvam STT/TTS). It
+    turns what TTS would have spoken — the Flows fixed lines (TTSSpeakFrame)
+    and the LLM's replies (LLMTextFrame, regrouped into sentences) — into
+    TTSTextFrames. The output transport releases those and the RTVI observer
+    forwards them as `bot-tts-text`, the same captions the page shows in voice
+    mode. Speaking start/stop is marked after the transport (CaptionSpeaking-
+    Marker), in order with the text.
+    """
+
+    _SENTENCE_END = re.compile(r"(?<=[।.!?…])\s+")
+
+    def __init__(self):
+        super().__init__()
+        self._buffer = ""
+
+    async def _caption(self, text: str, append_to_context: bool = True):
+        text = text.strip()
+        if not text:
+            return
+        frame = TTSTextFrame(text, text_type=TextType.SENTENCE)
+        frame.append_to_context = append_to_context
+        await self.push_frame(frame)
+
+    async def _flush(self, final: bool):
+        parts = self._SENTENCE_END.split(self._buffer)
+        done, self._buffer = (parts, "") if final else (parts[:-1], parts[-1])
+        for sentence in done:
+            await self._caption(sentence)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSSpeakFrame):
+            await self._caption(frame.text, frame.append_to_context)
+            # What a real TTS pushes once a TTSSpeakFrame is spoken: commit the
+            # fixed line to the context — and, here, the end of the utterance.
+            await self.push_frame(LLMAssistantPushAggregationFrame())
+        elif isinstance(frame, LLMTextFrame) and not getattr(frame, "skip_tts", False):
+            self._buffer += frame.text
+            await self._flush(final=False)
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            await self._flush(final=True)
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, InterruptionFrame):
+            self._buffer = ""
+            await self.push_frame(frame, direction)
+        else:
+            await self.push_frame(frame, direction)
+
+
+class CaptionSpeakingMarker(FrameProcessor):
+    """Text mode: "bot started / stopped speaking", which the output
+    transport derives from audio in voice mode.
+
+    Sits right after the output transport, so it sees the captions in the
+    order the transport releases them. Bot{Started,Stopped}SpeakingFrame are
+    system frames: pushed from before the transport they overtake the queued
+    text, and the RTVI observer — which holds bot text until the bot "starts
+    speaking" — would sit on every caption until the next utterance.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._speaking = False
+
+    async def _set_speaking(self, speaking: bool):
+        if speaking == self._speaking:
+            return
+        self._speaking = speaking
+        cls = BotStartedSpeakingFrame if speaking else BotStoppedSpeakingFrame
+        down, up = cls(), cls()
+        down.broadcast_sibling_id = up.id
+        up.broadcast_sibling_id = down.id
+        await self.push_frame(down)
+        await self.push_frame(up, FrameDirection.UPSTREAM)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM and isinstance(frame, TTSTextFrame):
+            # The observer already queued this caption as the transport pushed
+            # it; "started speaking" releases it to the page.
+            await self._set_speaking(True)
+            await self.push_frame(frame, direction)
+        elif direction == FrameDirection.DOWNSTREAM and isinstance(
+            frame, (LLMFullResponseEndFrame, LLMAssistantPushAggregationFrame)
+        ):
+            await self.push_frame(frame, direction)
+            await self._set_speaking(False)
+        elif isinstance(frame, InterruptionFrame):
+            await self.push_frame(frame, direction)
+            await self._set_speaking(False)
+        else:
+            await self.push_frame(frame, direction)
+
+
 def _make_ui_pusher(task: "PipelineTask") -> Callable[[dict], Awaitable[None]]:
     """Send a UI event (flow.py: try_on_frame / liked / session_end) to the
     browser as an RTVI server message.
@@ -420,7 +524,25 @@ def _make_ui_pusher(task: "PipelineTask") -> Callable[[dict], Awaitable[None]]:
     return push
 
 
+def _is_text_session(runner_args: RunnerArguments) -> bool:
+    """Text mode: the customer types (quick replies / keyboard) and reads the
+    replies as captions — no mic, no Sarvam STT/TTS.
+
+    Chosen per session by the page, which offers to /api/offer?session_id=
+    text-<uuid> (the runner's offer route keeps session_id; it drops the
+    client's camelCase requestData). VOICE_MODE=text forces it for everyone.
+    """
+    if os.environ.get("VOICE_MODE", "").strip().lower() == "text":
+        return True
+    return str(getattr(runner_args, "session_id", "") or "").startswith("text-")
+
+
 async def bot(runner_args: RunnerArguments) -> None:
+    text_mode = _is_text_session(runner_args)
+    logger.info(
+        f"Session {getattr(runner_args, 'session_id', '?')}: "
+        f"{'TEXT mode (typed input, captions only)' if text_mode else 'VOICE mode'}"
+    )
     transport = await create_transport(
         runner_args,
         {
@@ -442,51 +564,59 @@ async def bot(runner_args: RunnerArguments) -> None:
                 # shop hum). Krisp would also remove OTHER voices but needs a
                 # licence — swap in KrispVivaFilter if that is bought.
                 audio_in_filter=RNNoiseFilter(),
+            ) if not text_mode else TransportParams(
+                # Text mode: the page sends no mic; replies are captions only.
+                audio_in_enabled=False,
+                audio_out_enabled=True,
             ),
         },
     )
 
-    stt = KeytermSarvamSTTService(
-        api_key=os.getenv("SARVAM_API_KEY"),
-        keyterms=stt_keyterms(),
-        # pipecat 1.12 removed the saarika models — only saaras:v3/v4 remain,
-        # and both default to mode="transcribe" (not translate), so no mode=
-        # is needed. saaras:v4 is the current model.
-        settings=SarvamSTTService.Settings(
-            model="saaras:v4",
-            language=Language.HI_IN,
-            # Turns on Sarvam's server-side VAD, which is what emits the
-            # UserStarted/UserStoppedSpeakingFrame pair ExternalUserTurnStopStrategy
-            # below listens for. Without this, nothing signals turn-stop at all.
-            vad_signals=True,
-        ),
-    )
+    # Speech in/out — voice mode only. Text mode has neither (no mic; the
+    # replies are captions), so it runs without any Sarvam credits.
+    stt = tts = None
+    if not text_mode:
+        stt = KeytermSarvamSTTService(
+            api_key=os.getenv("SARVAM_API_KEY"),
+            keyterms=stt_keyterms(),
+            # pipecat 1.12 removed the saarika models — only saaras:v3/v4 remain,
+            # and both default to mode="transcribe" (not translate), so no mode=
+            # is needed. saaras:v4 is the current model.
+            settings=SarvamSTTService.Settings(
+                model="saaras:v4",
+                language=Language.HI_IN,
+                # Turns on Sarvam's server-side VAD, which is what emits the
+                # UserStarted/UserStoppedSpeakingFrame pair ExternalUserTurnStopStrategy
+                # below listens for. Without this, nothing signals turn-stop at all.
+                vad_signals=True,
+            ),
+        )
 
-    @stt.event_handler("on_connection_error")
-    async def on_stt_connection_error(service, error):
-        # Sarvam's realtime STT has no working auto-reconnect despite
-        # reconnect_on_error=True (PART2_PLAN.md, Production settings). Rather
-        # than a fragile in-process hot-swap, log loudly and end the task —
-        # deploy bot.py under a process supervisor (pm2/systemd) that restarts
-        # on exit, so a dropped STT socket costs one reconnect, not a deaf kiosk.
-        logger.error(f"Sarvam STT connection error: {error} — ending task for restart")
-        await task.cancel()
+        @stt.event_handler("on_connection_error")
+        async def on_stt_connection_error(service, error):
+            # Sarvam's realtime STT has no working auto-reconnect despite
+            # reconnect_on_error=True (PART2_PLAN.md, Production settings). Rather
+            # than a fragile in-process hot-swap, log loudly and end the task —
+            # deploy bot.py under a process supervisor (pm2/systemd) that restarts
+            # on exit, so a dropped STT socket costs one reconnect, not a deaf kiosk.
+            logger.error(f"Sarvam STT connection error: {error} — ending task for restart")
+            await task.cancel()
 
-    tts = SarvamTTSService(
-        api_key=os.getenv("SARVAM_API_KEY"),
-        settings=SarvamTTSService.Settings(
-            model="bulbul:v3",
-            language=Language.HI_IN,  # default is English — must be set for Hindi output
-            min_buffer_size=20,  # default 50 is the single biggest latency cost
-            # Fixed voice + pace; temperature down from the 0.6 default — Sarvam:
-            # lower is "more stable and consistent" (range 0.01–2.0).
-            voice="shubh",
-            pace=1.0,
-            temperature=0.25,
-        ),
-        # Prices/numbers → Devanagari words in Python, every time (speech_text.py).
-        text_filters=[HindiSpeechFilter()],
-    )
+        tts = SarvamTTSService(
+            api_key=os.getenv("SARVAM_API_KEY"),
+            settings=SarvamTTSService.Settings(
+                model="bulbul:v3",
+                language=Language.HI_IN,  # default is English — must be set for Hindi output
+                min_buffer_size=20,  # default 50 is the single biggest latency cost
+                # Fixed voice + pace; temperature down from the 0.6 default — Sarvam:
+                # lower is "more stable and consistent" (range 0.01–2.0).
+                voice="shubh",
+                pace=1.0,
+                temperature=0.25,
+            ),
+            # Prices/numbers → Devanagari words in Python, every time (speech_text.py).
+            text_filters=[HindiSpeechFilter()],
+        )
 
     if LLM_PROVIDER == "gemini":
         llm = _RetryingGoogleLLMService(
@@ -568,8 +698,22 @@ async def bot(runner_args: RunnerArguments) -> None:
         ),
     )
 
-    pipeline = Pipeline(
-        [
+    if text_mode:
+        # Typed turns arrive as RTVI send-text (appended to the context, LLM
+        # run straight away); replies leave as captions. No STT, no
+        # TranscriptGate (nothing to gate), no spoken filler — the page shows
+        # its own "typing" cue while the LLM works.
+        processors = [
+            transport.input(),
+            context_aggregator.user(),
+            llm,
+            CaptionOnlyTTS(),
+            transport.output(),
+            CaptionSpeakingMarker(),
+            context_aggregator.assistant(),
+        ]
+    else:
+        processors = [
             transport.input(),
             stt,
             TranscriptGate(),
@@ -580,7 +724,7 @@ async def bot(runner_args: RunnerArguments) -> None:
             transport.output(),
             context_aggregator.assistant(),
         ]
-    )
+    pipeline = Pipeline(processors)
 
     task = PipelineTask(
         pipeline,
@@ -597,7 +741,7 @@ async def bot(runner_args: RunnerArguments) -> None:
     # The conversation is a Flows state machine (flow.py): fixed lines,
     # per-stage tools, and the try-on push as a node action instead of an
     # LLM promise.
-    store_flow = StoreFlow(_make_ui_pusher(task))
+    store_flow = StoreFlow(_make_ui_pusher(task), text_mode=text_mode)
     flow_manager = FlowManager(
         llm=llm,
         context_aggregator=context_aggregator,

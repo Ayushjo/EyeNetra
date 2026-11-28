@@ -21,7 +21,28 @@ import { useTryOnStore } from "@/store/tryOnStore";
  *  - temples: a narrow strip along each hinge→ear segment.
  * Everything is offset slightly downward (light from above).
  */
+/*
+ * The shadows are painted on the same surfaces the depth mask writes (face
+ * mask, skull). For the shadow to pass the depth test exactly where the mask
+ * is frontmost, both must compute IDENTICAL depth: same expression, and
+ * `invariant gl_Position` so the GPU may not compute it differently in the
+ * two programs. (Different shaders rounded a hair apart and the nose-pad
+ * shadow speckled in stripes; a polygon-offset nudge instead pushed the
+ * shadow in front of the nose ridge on turned heads.)
+ */
+const MASK_VERT = /* glsl */ `
+  invariant gl_Position;
+  void main() {
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const MASK_FRAG = /* glsl */ `
+  void main() {
+    gl_FragColor = vec4(0.0);
+  }
+`;
 const SHADOW_VERT = /* glsl */ `
+  invariant gl_Position;
   uniform mat4 uToAnchor;
   varying vec3 vPos;
   void main() {
@@ -29,6 +50,8 @@ const SHADOW_VERT = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
+/** Skull proxy sphere: the mask and its shadow MUST share this tessellation. */
+const SKULL_SEGMENTS: [number, number, number] = [1, 24, 18];
 const SHADOW_FRAG = /* glsl */ `
   varying vec3 vPos;
   uniform vec3 uPads[2];
@@ -131,6 +154,19 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
       });
     return [make(), make()];
   }, [shadowUniforms]);
+  // Depth-only mask material: same vertex code as the shadows (see MASK_VERT).
+  const maskMaterial = useMemo(
+    () =>
+      new ShaderMaterial({
+        vertexShader: MASK_VERT,
+        fragmentShader: MASK_FRAG,
+        colorWrite: false,
+        depthWrite: true,
+        depthTest: true,
+        side: DoubleSide,
+      }),
+    [],
+  );
 
   // Per-frame hot path: 468 vertex updates; geometry/index buffers are reused.
   // Runs after useFitEngine: same default priority, but the parent
@@ -230,15 +266,12 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
 
   return (
     <>
-      <mesh ref={meshRef} geometry={geometry} visible={false} renderOrder={0} frustumCulled={false}>
-        <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
-      </mesh>
+      <mesh ref={meshRef} geometry={geometry} material={maskMaterial} visible={false} renderOrder={0} frustumCulled={false} />
       <mesh ref={headLoftRef} geometry={headLoftGeometry} visible={false} renderOrder={0} frustumCulled={false}>
         <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
       </mesh>
-      <mesh ref={capRef} visible={false} renderOrder={0} frustumCulled={false}>
-        <sphereGeometry args={[1, 24, 18]} />
-        <meshBasicMaterial colorWrite={false} depthWrite depthTest side={DoubleSide} />
+      <mesh ref={capRef} material={maskMaterial} visible={false} renderOrder={0} frustumCulled={false}>
+        <sphereGeometry args={SKULL_SEGMENTS} />
       </mesh>
       <mesh ref={earLRef} visible={false} renderOrder={0} frustumCulled={false}>
         <sphereGeometry args={[1, 16, 12]} />
@@ -252,7 +285,7 @@ export function FaceMeshOccluder({ anchorRef }: { anchorRef: React.RefObject<Gro
           and before the glasses (10). */}
       <mesh ref={shadowRef} geometry={geometry} material={shadowMaterial} visible={false} renderOrder={5} frustumCulled={false} />
       <mesh ref={skullShadowRef} material={skullShadowMaterial} visible={false} renderOrder={5} frustumCulled={false}>
-        <sphereGeometry args={[1, 32, 24]} />
+        <sphereGeometry args={SKULL_SEGMENTS} />
       </mesh>
     </>
   );

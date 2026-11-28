@@ -1,13 +1,11 @@
 import { getFaceLandmarker } from "@/lib/mediapipe/faceLandmarker";
-import { buildTrackingFrame } from "@/tracking/buildTrackingFrame";
 import { presentFrame } from "@/tracking/frameSync";
-import { solveHeadPosePnP } from "@/lib/pnp";
+import { devSample } from "@/lib/devMetrics";
+import { DETECT_MAX_SIDE, mediapipeTrackingFrame } from "@/tracking/mediapipeFrame";
 import { useTryOnStore } from "@/store/tryOnStore";
-import type { TrackingFrame, TrackingProvider } from "@/tracking/types";
+import type { TrackerStats, TrackingFrame, TrackingProvider } from "@/tracking/types";
 
 type VideoFrameMetadata = { mediaTime: number };
-/** PnP solves worse than this (px RMS) fall back to the MediaPipe matrix. */
-const PNP_MAX_RMS_PX = 25;
 
 type VideoWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback: (
@@ -16,39 +14,11 @@ type VideoWithFrameCallback = HTMLVideoElement & {
   cancelVideoFrameCallback: (handle: number) => void;
 };
 
-function silenceMediapipeConsole<T>(fn: () => T): T {
-  const originalError = console.error;
-  const originalWarn = console.warn;
-  const filter = (...args: unknown[]) => {
-    const text = args.map(String).join(" ");
-    if (
-      text.includes("TensorFlow Lite") ||
-      text.includes("XNNPACK") ||
-      text.includes("Created TensorFlow") ||
-      text.includes("W0000") ||
-      text.includes("INFO:")
-    ) {
-      return;
-    }
-    originalError.apply(console, args as Parameters<typeof console.error>);
-  };
-  console.error = filter as typeof console.error;
-  console.warn = ((...args: unknown[]) => {
-    const text = args.map(String).join(" ");
-    if (text.includes("TensorFlow") || text.includes("XNNPACK")) return;
-    originalWarn.apply(console, args as Parameters<typeof console.warn>);
-  }) as typeof console.warn;
-  try {
-    return fn();
-  } finally {
-    console.error = originalError;
-    console.warn = originalWarn;
-  }
-}
-
 /**
  * Current MediaPipe FaceLandmarker + computePose, behind TrackingProvider.
- * Behavior matches the pre-provider matrix pose path.
+ * Behavior matches the pre-provider matrix pose path. Detection runs on the
+ * page's main thread — the fallback for WorkerMediaPipeProvider, and the
+ * engine for SYNC display (which must paint the very frame it analyses).
  */
 export class MediaPipeProvider implements TrackingProvider {
   readonly id = "mediapipe" as const;
@@ -62,16 +32,22 @@ export class MediaPipeProvider implements TrackingProvider {
   private frames = 0;
   private fpsWindowStart = 0;
   private latest: TrackingFrame | null = null;
-  private lastPnpLogMs = 0;
+  private detectMsSum = 0;
+  /** Downscaled copy of the frame the detector analyses (GPU 2D canvas). */
+  private detectCanvas: OffscreenCanvas | HTMLCanvasElement | null = null;
+  private detectCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
   private onStatus?: (s: "loading" | "ready" | "error", err?: string) => void;
   private onFps?: (fps: number) => void;
+  private onStats?: (s: TrackerStats) => void;
 
   constructor(opts?: {
     onStatus?: (s: "loading" | "ready" | "error", err?: string) => void;
     onFps?: (fps: number) => void;
+    onStats?: (s: TrackerStats) => void;
   }) {
     this.onStatus = opts?.onStatus;
     this.onFps = opts?.onFps;
+    this.onStats = opts?.onStats;
   }
 
   getFrame(): TrackingFrame | null {
@@ -85,14 +61,13 @@ export class MediaPipeProvider implements TrackingProvider {
     this.timestampMs = 0;
     this.frameSkip = 0;
     this.frames = 0;
+    this.detectMsSum = 0;
     this.fpsWindowStart = performance.now();
     this.latest = null;
     this.onStatus?.("loading");
 
     try {
-      const landmarker = await silenceMediapipeConsole(() =>
-        getFaceLandmarker(),
-      );
+      const landmarker = await getFaceLandmarker();
       if (this.cancelled) return;
       this.onStatus?.("ready");
 
@@ -114,52 +89,28 @@ export class MediaPipeProvider implements TrackingProvider {
         this.timestampMs = Math.max(this.timestampMs + 1, Math.floor(now));
 
         try {
-          // Show exactly the frame the detector analyses (frameSync.ts).
-          presentFrame(v);
-          const result = silenceMediapipeConsole(() =>
-            landmarker.detectForVideo(v, this.timestampMs),
-          );
+          // SYNC display only: show exactly the frame the detector analyses.
+          presentFrame(v, v.videoWidth, v.videoHeight);
+          const t0 = performance.now();
+          const result = landmarker.detectForVideo(this.detectSource(v), this.timestampMs);
+          const t1 = performance.now();
+          this.detectMsSum += t1 - t0;
+          devSample("wait", t0 - now);
+          devSample("detect", t1 - t0);
+          devSample("handoff", 0);
           const face = result.faceLandmarks[0] ?? null;
           const matrix = result.facialTransformationMatrixes[0];
-          const landmarks = face
-            ? face.map((p) => ({ x: p.x, y: p.y, z: p.z }))
-            : null;
-          const mediapipeMatrix = matrix?.data ? [...matrix.data] : null;
-          const videoWidth = v.videoWidth || 1280;
-          const videoHeight = v.videoHeight || 720;
-
-          const store = useTryOnStore.getState();
-          // Head pose by PnP on 33 rigid landmarks under the render camera's
-          // own intrinsics (technique from Meta's try-on; lib/pnp.ts). The
-          // MediaPipe matrix seeds the solve and remains the fallback.
-          let transformMatrix = mediapipeMatrix;
-          if (landmarks && mediapipeMatrix) {
-            const pnp = solveHeadPosePnP(
-              landmarks, mediapipeMatrix, videoWidth, videoHeight, store.cameraCalib.fovDeg,
-            );
-            if (pnp && pnp.rmsPx < PNP_MAX_RMS_PX) transformMatrix = pnp.matrix;
-            if (store.debugPoseLog && pnp && now - this.lastPnpLogMs > 1000) {
-              this.lastPnpLogMs = now;
-              console.info(`[EyeNetra:pnp] rms=${pnp.rmsPx.toFixed(2)}px it=${pnp.iterations}`);
-            }
-          }
-          const sku = store.selectedFrame();
-          this.latest = buildTrackingFrame({
-            landmarks,
-            transformMatrix,
-            videoWidth,
-            videoHeight,
-            timestampMs: metadata?.mediaTime != null
-              ? metadata.mediaTime * 1000
-              : now,
+          this.latest = mediapipeTrackingFrame({
+            landmarks: face ? face.map((p) => ({ x: p.x, y: p.y, z: p.z })) : null,
+            mediapipeMatrix: matrix?.data ? [...matrix.data] : null,
+            videoWidth: v.videoWidth || 1280,
+            videoHeight: v.videoHeight || 720,
+            timestampMs: metadata?.mediaTime != null ? metadata.mediaTime * 1000 : now,
             detectedAtMs: performance.now(),
-            sku,
-            faceProfile: store.faceProfile,
-            headAnchors: store.headAnchors,
-            glassesGeom: store.glassesGeom[sku.id] ?? null,
-            perspTune: store.perspTune,
-            cameraCalib: store.cameraCalib,
-            debugLog: store.debugPoseLog,
+            // When this frame reached the page — same clock as
+            // frameSync.getLiveFrameAtMs().
+            frameAtMs: now,
+            receivedAtMs: performance.now(),
           });
         } catch (err) {
           console.warn("[EyeNetra:mediapipe] detect skipped", err);
@@ -168,7 +119,12 @@ export class MediaPipeProvider implements TrackingProvider {
         this.frames += 1;
         if (now - this.fpsWindowStart >= 1000) {
           this.onFps?.(this.frames);
+          this.onStats?.({
+            engine: "main",
+            detectMs: this.frames ? this.detectMsSum / this.frames : null,
+          });
           this.frames = 0;
+          this.detectMsSum = 0;
           this.fpsWindowStart = now;
         }
 
@@ -186,6 +142,33 @@ export class MediaPipeProvider implements TrackingProvider {
       );
       throw err;
     }
+  }
+
+  /**
+   * The frame to detect on: the video itself if it is already small, else a
+   * downscaled copy (one GPU drawImage, ~0.3 ms). Landmarks are normalised,
+   * so the smaller image yields the same coordinates.
+   */
+  private detectSource(v: HTMLVideoElement): TexImageSource {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const scale = Math.min(1, DETECT_MAX_SIDE / Math.max(vw, vh));
+    if (scale >= 1 || !vw || !vh) return v;
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
+    if (!this.detectCanvas || this.detectCanvas.width !== w || this.detectCanvas.height !== h) {
+      this.detectCanvas =
+        typeof OffscreenCanvas !== "undefined"
+          ? new OffscreenCanvas(w, h)
+          : Object.assign(document.createElement("canvas"), { width: w, height: h });
+      // Never read back on the CPU: the canvas must stay GPU-backed so the
+      // detector's upload of it is a GPU copy.
+      this.detectCtx = this.detectCanvas.getContext("2d", { alpha: false }) as
+        | OffscreenCanvasRenderingContext2D
+        | CanvasRenderingContext2D
+        | null;
+    }
+    if (!this.detectCtx) return v;
+    this.detectCtx.drawImage(v, 0, 0, w, h);
+    return this.detectCanvas;
   }
 
   private tickFn:
@@ -220,5 +203,7 @@ export class MediaPipeProvider implements TrackingProvider {
     this.video = null;
     this.tickFn = null;
     this.latest = null;
+    this.detectCanvas = null;
+    this.detectCtx = null;
   }
 }

@@ -8,14 +8,24 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-geist-sans), var(--font-devanagari);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-geist-sans), var(--font-devanagari), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Captions: white text, black outline, very slight drop shadow — readable
+   over any background without a box. The stroke is painted BEHIND the fill
+   (paint-order), so it adds an outline instead of eating into the letters. */
+.caption-text {
+  color: #fff;
+  -webkit-text-stroke: 0.12em rgba(0, 0, 0, 0.72);
+  paint-order: stroke fill;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 /* Voice assistant — captions: each newly spoken word fades/rises in. */
@@ -70,7 +80,21 @@ body {
 }
 .orb-ping { animation: orb-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
 
+/* "Thinking": three dots rising in turn under the caption. */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: none; }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+.typing-dot { animation: typing-dot 1.1s ease-in-out infinite; }
+
+/* Framing hint ("come a little closer") fades in, never pops. */
+@keyframes hint-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.hint-in { animation: hint-in 400ms ease-out both; }
+
 @media (prefers-reduced-motion: reduce) {
   .caption-word, .frame-drop, .face-flash, .like-float,
-  .orb-ping, .drop-progress { animation: none; }
+  .orb-ping, .drop-progress, .typing-dot, .hint-in { animation: none; }
 }
